@@ -18,7 +18,6 @@ from rich.table import Table
 from rich.text import Text
 
 from benchmark_catalog import (
-    AA_INDEXES,
     BENCHMARK_TYPES,
     DESIGN_ARENAS,
     DESIGN_CATEGORIES,
@@ -61,7 +60,10 @@ def read_cache(params: dict[str, Any], ttl: int) -> dict[str, Any] | None:
         return None
     if time.time() - payload.get("timestamp", 0) > ttl:
         return None
-    return payload.get("data")
+    data = payload.get("data")
+    if not isinstance(data, dict):
+        return None
+    return data
 
 
 def write_cache(params: dict[str, Any], data: dict[str, Any]) -> None:
@@ -131,6 +133,9 @@ def parse_price(per_token_str: str | None) -> float | None:
     except (TypeError, ValueError):
         return None
 
+# The API returns pricing as cost per token; this converts to cost per 1 000 tokens
+# so the rendered table columns ("$/1K in" / "$/1K out") display familiar figures.
+
 
 def fmt_price(per_token_str: str | None) -> str:
     val = parse_price(per_token_str)
@@ -157,23 +162,24 @@ def filter_by_creator(items: list[dict[str, Any]], creator: str | None) -> list[
 
 
 def sort_by_score_desc(items: list[dict[str, Any]], source: str) -> list[dict[str, Any]]:
-    def key(it: dict[str, Any]) -> float:
+    def _pick(entry: dict[str, Any]) -> float:
+        val: float | None = None
         if source == "artificial-analysis":
-            return (
-                it.get("intelligence_index")
-                or it.get("coding_index")
-                or it.get("agentic_index")
-                or 0.0
-            )
-        if source == "design-arena":
-            return it.get("elo") or 0.0
-        if source == "openrouter":
-            if it.get("benchmark_type", "").startswith("search_"):
-                return it.get("primary_score") or 0.0
-            return it.get("accuracy") or 0.0
-        return 0.0
+            val = entry.get("intelligence_index")
+            if val is None:
+                val = entry.get("coding_index")
+            if val is None:
+                val = entry.get("agentic_index")
+        elif source == "design-arena":
+            val = entry.get("elo")
+        elif source == "openrouter":
+            if entry.get("benchmark_type", "").startswith("search_"):
+                val = entry.get("primary_score")
+            else:
+                val = entry.get("accuracy")
+        return val if val is not None else 0.0
 
-    return sorted(items, key=key, reverse=True)
+    return sorted(items, key=_pick, reverse=True)
 
 
 def group_by_source(items: list[dict[str, Any]]) -> dict[str, list[dict[str, Any]]]:
@@ -246,6 +252,8 @@ def render_da_table(items: list[dict[str, Any]], top: int) -> Table:
 def render_or_table(items: list[dict[str, Any]], top: int) -> Table:
     classic = [it for it in items if not it.get("benchmark_type", "").startswith("search_")]
     search = [it for it in items if it.get("benchmark_type", "").startswith("search_")]
+    if not classic and not search:
+        return Table(title="OpenRouter Benchmarks")
     table = Table(title="OpenRouter Benchmarks", show_lines=False)
 
     if classic:
@@ -395,6 +403,9 @@ def print_citation(data: dict[str, Any]) -> None:
 
 
 def prompt_choice(question: str, options: dict[str, str], allow_blank: bool = False) -> str:
+    if not options:
+        console.print("[red]No options available.[/red]")
+        return ""
     while True:
         console.print(question)
         for idx, (key, desc) in enumerate(options.items(), start=1):
@@ -446,8 +457,8 @@ def interactive_menu() -> argparse.Namespace:
         category=category,
         creator=creator_raw or None,
         top=top,
-        json=None,
-        csv=None,
+        json_out=None,
+        csv_out=None,
         no_cache=False,
         ttl=CACHE_TTL_SECONDS,
         interactive=True,
@@ -519,11 +530,10 @@ def main() -> None:
         export_json(data, args.json_out)
     if args.csv_out:
         export_csv(data, args.csv_out)
-    if args.json_out or args.csv_out:
-        if not (args.json_out or args.csv_out):
-            pass
 
-    if not (args.json_out or args.csv_out):
+    if args.json_out or args.csv_out:
+        console.print("[dim](Exported only — no table rendered.)[/dim]")
+    else:
         tables = render_results(data, creator=args.creator, top=args.top)
         if not tables:
             console.print("[yellow]No matching models.[/yellow]")
@@ -531,9 +541,6 @@ def main() -> None:
             for table in tables:
                 console.print(table)
         print_citation(data)
-    else:
-        if not (args.json_out and args.csv_out):
-            console.print("[dim](Exported only — no table rendered.)[/dim]")
 
 
 if __name__ == "__main__":

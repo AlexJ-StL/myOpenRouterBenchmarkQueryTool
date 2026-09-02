@@ -17,7 +17,7 @@ When you want to pick a model for something, OpenRouter's unified `/v1/benchmark
 
 ## Prerequisites
 
-- **Python 3.11+** (tested on 3.12 and 3.13)
+- **Python 3.13+**
 - [**uv**](https://docs.astral.sh/uv/) — fast Python package manager
 - An **OpenRouter API key** — get one at <https://openrouter.ai/keys>
 

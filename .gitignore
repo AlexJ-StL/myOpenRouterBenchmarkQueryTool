@@ -7,9 +7,7 @@ __pycache__/
 .env.local
 .env.*.local
 cache/
-*.json
-!benchmark_catalog.py
-exports/
+# Keep exports/ for user output
 .DS_Store
 Thumbs.db
 .idea/

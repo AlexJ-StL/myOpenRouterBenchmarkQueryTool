@@ -7,7 +7,7 @@ __pycache__/
 .env.local
 .env.*.local
 cache/
-# Keep exports/ for user output
+exports/
 .DS_Store
 Thumbs.db
 .idea/

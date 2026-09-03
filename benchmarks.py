@@ -5,8 +5,10 @@ import csv
 import hashlib
 import json
 import os
+import random
 import sys
 import time
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
@@ -28,18 +30,58 @@ from benchmark_catalog import (
 API_URL = "https://openrouter.ai/api/v1/benchmarks"
 CACHE_DIR = Path(__file__).parent / "cache"
 CACHE_TTL_SECONDS = 3600
+MAX_CACHE_FILES = 200
 console = Console()
+
+
+class BenchmarkError(Exception):
+    """Base class for recoverable benchmark query errors."""
+
+
+class BenchmarkAuthError(BenchmarkError):
+    """OPENROUTER_API_KEY is missing or invalid."""
+
+
+class BenchmarkRateLimitError(BenchmarkError):
+    """OpenRouter rate limit hit (HTTP 429)."""
+
+
+class BenchmarkServerError(BenchmarkError):
+    """OpenRouter returned a 5xx response."""
+
+
+class BenchmarkAPIError(BenchmarkError):
+    """OpenRouter returned an unexpected non-200 response."""
+
+
+class BenchmarkNetworkError(BenchmarkError):
+    """Network-level failure reaching the API."""
+
+
+@dataclass
+class Args:
+    source: str = "all"
+    task: str = ""
+    benchmark: str = ""
+    arena: str = ""
+    category: str = ""
+    creator: str | None = None
+    top: int = 20
+    json_out: str | None = None
+    csv_out: str | None = None
+    no_cache: bool = False
+    ttl: int = CACHE_TTL_SECONDS
+    interactive: bool = False
 
 
 def get_api_key() -> str:
     load_dotenv()
     key = os.getenv("OPENROUTER_API_KEY", "").strip()
     if not key or key == "your-openrouter-api-key-here":
-        console.print(
-            "[red]Missing OPENROUTER_API_KEY.[/red] Set it in your environment "
+        raise BenchmarkAuthError(
+            "Missing OPENROUTER_API_KEY. Set it in your environment "
             "or copy .env.example to .env and fill in your key.",
         )
-        sys.exit(1)
     return key
 
 
@@ -67,12 +109,27 @@ def read_cache(params: dict[str, Any], ttl: int) -> dict[str, Any] | None:
 
 
 def write_cache(params: dict[str, Any], data: dict[str, Any]) -> None:
+    _evict_if_needed()
     CACHE_DIR.mkdir(parents=True, exist_ok=True)
     path = CACHE_DIR / f"{cache_key(params)}.json"
     path.write_text(
         json.dumps({"timestamp": time.time(), "data": data}, default=str),
         encoding="utf-8",
     )
+
+
+def _evict_if_needed() -> None:
+    if not CACHE_DIR.exists():
+        return
+    files = sorted(
+        CACHE_DIR.glob("*.json"),
+        key=lambda p: p.stat().st_mtime,
+    )
+    # Reserve one slot for the file about to be written.
+    excess = len(files) - MAX_CACHE_FILES + 1
+    if excess > 0:
+        for stale in files[:excess]:
+            stale.unlink()
 
 
 def fetch_benchmarks(
@@ -86,37 +143,54 @@ def fetch_benchmarks(
         if cached is not None:
             return cached
     headers = {"Authorization": f"Bearer {api_key}"}
-    with httpx.Client(timeout=30.0) as client:
-        try:
-            response = client.get(API_URL, headers=headers, params=params)
-        except httpx.HTTPError as exc:
-            console.print(f"[red]Network error:[/red] {exc}")
-            sys.exit(1)
-    if response.status_code == 401:
-        console.print(
-            "[red]Unauthorized (401).[/red] OPENROUTER_API_KEY is missing or invalid.",
-        )
-        sys.exit(1)
-    if response.status_code == 429:
-        console.print(
-            "[red]Rate limited (429).[/red] OpenRouter allows 30 requests/min "
-            "and 500 requests/day. Wait a moment and try again, or rely on cache.",
-        )
-        sys.exit(1)
-    if response.status_code >= 500:
-        console.print(
-            f"[red]OpenRouter server error ({response.status_code}).[/red] Try again later.",
-        )
-        sys.exit(1)
-    if response.status_code != 200:
-        console.print(
-            f"[red]Request failed ({response.status_code}):[/red] {response.text}",
-        )
-        sys.exit(1)
-    data = response.json()
-    if use_cache:
-        write_cache(params, data)
-    return data
+    max_retries = 2
+    base_delay_s = 5.0
+    with httpx.Client(timeout=httpx.Timeout(
+        connect=10.0,
+        read=60.0,
+        write=10.0,
+        pool=10.0,
+    )) as client:
+        last_error: BenchmarkError | None = None
+        for attempt in range(max_retries + 1):
+            try:
+                response = client.get(API_URL, headers=headers, params=params)
+            except httpx.HTTPError as exc:
+                last_error = BenchmarkNetworkError(f"Network error: {exc}")
+                break
+            if response.status_code == 429:
+                if attempt < max_retries:
+                    delay = base_delay_s * (2 ** attempt) + random.uniform(0, 1)
+                    console.print(f"[yellow]Rate limited. Retrying in {delay:.1f}s...[/yellow]")
+                    time.sleep(delay)
+                    continue
+                last_error = BenchmarkRateLimitError(
+                    "OpenRouter allows 30 requests/min and 500 requests/day. "
+                    "Wait a moment and try again, or rely on cache.",
+                )
+                break
+            if response.status_code == 401:
+                last_error = BenchmarkAuthError(
+                    "Unauthorized (401). OPENROUTER_API_KEY is missing or invalid.",
+                )
+                break
+            if response.status_code >= 500:
+                last_error = BenchmarkServerError(
+                    f"OpenRouter server error ({response.status_code}). Try again later.",
+                )
+                break
+            if response.status_code != 200:
+                last_error = BenchmarkAPIError(
+                    f"Request failed ({response.status_code}): {response.text}",
+                )
+                break
+            data = response.json()
+            if use_cache:
+                write_cache(params, data)
+            return data
+    if last_error is not None:
+        raise last_error
+    raise BenchmarkAPIError("Request failed with no response.")
 
 
 def creator_of(permaslug: str | None) -> str:
@@ -349,33 +423,33 @@ def export_csv(data: dict[str, Any], path: str) -> None:
         Path(path).write_text("", encoding="utf-8")
         console.print(f"[yellow]No items to write to {path}[/yellow]")
         return
+
+    flat_rows = [_flatten_row(it) for it in items]
     fieldnames: list[str] = []
     seen: set[str] = set()
-    for it in items:
-        for key in it.keys():
+    for row in flat_rows:
+        for key in row.keys():
             if key not in seen:
                 seen.add(key)
                 fieldnames.append(key)
-        pricing = it.get("pricing")
-        if isinstance(pricing, dict):
-            for key in pricing.keys():
-                full = f"pricing.{key}"
-                if full not in seen:
-                    seen.add(full)
-                    fieldnames.append(full)
+
     with Path(path).open("w", encoding="utf-8", newline="") as fh:
         writer = csv.DictWriter(fh, fieldnames=fieldnames)
         writer.writeheader()
-        for it in items:
-            row: dict[str, Any] = {}
-            for key in fieldnames:
-                if "." in key:
-                    parent, child = key.split(".", 1)
-                    row[key] = (it.get(parent) or {}).get(child) if isinstance(it.get(parent), dict) else None
-                else:
-                    row[key] = it.get(key)
+        for row in flat_rows:
             writer.writerow(row)
     console.print(f"[green]Wrote[/green] {path}")
+
+
+def _flatten_row(item: dict[str, Any]) -> dict[str, Any]:
+    row: dict[str, Any] = {}
+    for key, value in item.items():
+        if isinstance(value, dict):
+            for child_key, child_val in value.items():
+                row[f"{key}.{child_key}"] = child_val
+        else:
+            row[key] = value
+    return row
 
 
 def print_citation(data: dict[str, Any]) -> None:
@@ -425,7 +499,7 @@ def prompt_choice(question: str, options: dict[str, str], allow_blank: bool = Fa
         console.print(f"[red]Pick 1–{len(options)}.[/red]")
 
 
-def interactive_menu() -> argparse.Namespace:
+def interactive_menu() -> Args:
     console.print(Panel.fit("[bold]OpenRouter Benchmark Query Tool[/bold]", border_style="cyan"))
     source = prompt_choice("[bold]Pick a source:[/bold]", SOURCES)
     benchmark = ""
@@ -449,7 +523,7 @@ def interactive_menu() -> argparse.Namespace:
     except ValueError:
         top = 20
 
-    return argparse.Namespace(
+    return Args(
         source=source,
         task=task,
         benchmark=benchmark,
@@ -465,7 +539,7 @@ def interactive_menu() -> argparse.Namespace:
     )
 
 
-def build_params(args: argparse.Namespace) -> dict[str, Any]:
+def build_params(args: Args) -> dict[str, Any]:
     params: dict[str, Any] = {}
     if args.source and args.source != "all":
         params["source"] = args.source
@@ -480,6 +554,23 @@ def build_params(args: argparse.Namespace) -> dict[str, Any]:
     if args.top and args.top > 0:
         params["max_results"] = args.top
     return params
+
+
+def _namespace_to_args(ns: argparse.Namespace) -> Args:
+    return Args(
+        source=getattr(ns, "source", "all"),
+        task=getattr(ns, "task", ""),
+        benchmark=getattr(ns, "benchmark", ""),
+        arena=getattr(ns, "arena", ""),
+        category=getattr(ns, "category", ""),
+        creator=getattr(ns, "creator", None),
+        top=getattr(ns, "top", 20),
+        json_out=getattr(ns, "json_out", None),
+        csv_out=getattr(ns, "csv_out", None),
+        no_cache=getattr(ns, "no_cache", False),
+        ttl=getattr(ns, "ttl", CACHE_TTL_SECONDS),
+        interactive=getattr(ns, "interactive", False),
+    )
 
 
 def main() -> None:
@@ -511,20 +602,26 @@ def main() -> None:
 
     raw_argv = sys.argv[1:]
     if not raw_argv:
-        args = interactive_menu()
+        args: Args = interactive_menu()
     else:
-        args = parser.parse_args(raw_argv)
-        if args.interactive:
+        ns = parser.parse_args(raw_argv)
+        if ns.interactive:
             args = interactive_menu()
+        else:
+            args = _namespace_to_args(ns)
 
-    api_key = get_api_key()
-    params = build_params(args)
-    data = fetch_benchmarks(
-        api_key=api_key,
-        params=params,
-        use_cache=not args.no_cache,
-        ttl=args.ttl,
-    )
+    try:
+        api_key = get_api_key()
+        params = build_params(args)
+        data = fetch_benchmarks(
+            api_key=api_key,
+            params=params,
+            use_cache=not args.no_cache,
+            ttl=args.ttl,
+        )
+    except BenchmarkError as exc:
+        console.print(f"[red]Error:[/red] {exc}")
+        sys.exit(1)
 
     if args.json_out:
         export_json(data, args.json_out)

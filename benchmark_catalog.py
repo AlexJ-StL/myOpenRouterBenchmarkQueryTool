@@ -36,9 +36,3 @@ DESIGN_CATEGORIES = {
     "video": "Video generation",
     "svg": "SVG generation",
 }
-
-AA_INDEXES = {
-    "coding_index": "Composite coding performance (0-100, higher is better)",
-    "intelligence_index": "Composite general intelligence (0-100, higher is better)",
-    "agentic_index": "Composite agentic / tool-use (0-100, higher is better)",
-}

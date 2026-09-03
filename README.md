@@ -12,8 +12,10 @@ When you want to pick a model for something, OpenRouter's unified `/v1/benchmark
 - **Power-user flags** — `--task coding --creator anthropic --top 10` for one-liners.
 - **Variety of model creators** — every row is grouped by `creator` (e.g. `anthropic`, `openai`, `google`, `meta-llama`) parsed from the `model_permaslug` field.
 - **Local cache** — repeat queries hit a JSON cache (default 1h TTL) to stay under OpenRouter's 30 req/min · 500 req/day rate limit.
+- **Cache eviction** — LRU-based eviction caps the `cache/` folder at 200 entries so disk usage stays bounded.
 - **Exports** — `--json out.json` and `--csv out.csv` for piping into other tools.
 - **Attribution** — the citation returned by the API is printed under every results table.
+- **Rate-limit retry** — automatic exponential backoff on HTTP 429 responses (up to 2 retries).
 
 ## Prerequisites
 
@@ -150,9 +152,24 @@ uv run benchmarks.py --task coding --no-cache
 
 - Calls `GET https://openrouter.ai/api/v1/benchmarks` with your `Authorization: Bearer <key>` header.
 - Passes through your filters as query parameters exactly as the API defines.
-- Caches the response under `cache/<sha256-of-params>.json` for 1 hour by default.
+- Caches the response under `cache/<sha256-of-params>.json` for 1 hour by default. When the cache exceeds 200 files, the oldest entries are evicted first (LRU).
 - Renders a per-source table sorted by the primary score for that source.
 - Prints the citation returned in `meta.citation` for attribution.
+- Handles errors with a typed exception hierarchy (`BenchmarkAuthError`, `BenchmarkRateLimitError`, `BenchmarkServerError`, `BenchmarkAPIError`, `BenchmarkNetworkError`).
+- Automatically retries rate-limited (HTTP 429) responses with exponential backoff before surfacing the error.
+
+## Development
+
+```bash
+# Install with dev dependencies
+uv sync --dev
+
+# Run the test suite
+uv run pytest tests/ -v
+
+# Type-check with pyright
+uv run pyright benchmarks.py tests/
+```
 
 ## Data sources & attribution
 

@@ -5,10 +5,15 @@
 
 ---
 
+> **All remediation items listed below have been implemented.**  
+> The codebase now contains the exception hierarchy, typed `Args` dataclass, cache
+> eviction, rate-limit retry/backoff, flattened CSV export, and a full test suite.
+> This document is retained for historical reference.
+
 ## 0. Immediate Corrections (introduced during the fix pass)
 
 ### 0-A. Restore `exports/` to `.gitignore`
-**Severity:** Medium · **Effort:** S
+**Severity:** Medium · **Effort:** S · **Status:** ✅ Done
 
 The `.gitignore` edit that removed `*.json` also accidentally removed the `exports/` entry
 and replaced it with a comment. User-generated export files (`--json out.json`,
@@ -23,10 +28,8 @@ committed.
  .DS_Store
 ```
 
----
-
 ### 0-B. Remove dead `AA_INDEXES` export from `benchmark_catalog.py`
-**Severity:** Low · **Effort:** S
+**Severity:** Low · **Effort:** S · **Status:** ✅ Done
 
 `AA_INDEXES` is confirmed unused — zero references anywhere in the repo after the
 `benchmarks.py` import was removed. It should be deleted from `benchmark_catalog.py`
@@ -44,7 +47,7 @@ AA_INDEXES = {
 ---
 
 ## 1. Error Handling — Replace `sys.exit(1)` with Exceptions
-**Severity:** Medium · **Effort:** M
+**Severity:** Medium · **Effort:** M · **Status:** ✅ Done
 
 **Files:** `benchmarks.py` — `get_api_key()` (lines 35–44), `fetch_benchmarks()` (lines 78–117)
 
@@ -52,10 +55,10 @@ AA_INDEXES = {
 to process termination. This makes the functions untestable without subprocess capture
 and prevents any caller from recovering or transforming the error.
 
-**Proposed change:**
+**Implemented change:**
 
 ```python
-# benchmarks.py — add near the top, after imports
+# benchmarks.py — added near the top, after imports
 class BenchmarkError(Exception):
     """Recoverable error from the benchmark query pipeline."""
 
@@ -80,42 +83,21 @@ class BenchmarkNetworkError(BenchmarkError):
     """Network-level failure reaching the API."""
 ```
 
-Replace each `sys.exit(1)` in `fetch_benchmarks` and `get_api_key` with the
-corresponding raise:
+Each `sys.exit(1)` in `fetch_benchmarks` and `get_api_key` was replaced with the
+corresponding `raise`. A single handler in `main()` catches `BenchmarkError` and
+exits with code 1.
 
-| Current call site | Replace with |
-|---|---|
-| `get_api_key()` missing key | `raise BenchmarkAuthError(...)` |
-| `fetch_benchmarks` httpx.HTTPError | `raise BenchmarkNetworkError(...)` from exc |
-| 401 response | `raise BenchmarkAuthError(...)` |
-| 429 response | `raise BenchmarkRateLimitError(...)` |
-| ≥500 response | `raise BenchmarkServerError(...)` |
-| other non-200 | `raise BenchmarkAPIError(...)` |
-
-Add a single handler in `main()`:
-
-```python
-def main() -> None:
-    ...
-    try:
-        data = fetch_benchmarks(...)
-    except BenchmarkError as exc:
-        console.print(f"[red]Error:[/red] {exc}")
-        sys.exit(1)
-```
-
-**Benefit:** All six error paths become individually testable with `pytest.raises`.
+**Benefit:** All six error paths are individually testable with `pytest.raises`.
 Callers that import these functions (future library use) can catch specific subtypes.
 
 ---
 
 ## 2. Add Tests
-**Severity:** High · **Effort:** L
+**Severity:** High · **Effort:** L · **Status:** ✅ Done
 
-**New files:** `tests/test_benchmarks.py`, `tests/test_catalog.py`
+**New files:** `tests/test_benchmarks.py`, `tests/__init__.py`
 
-The project has 24 functions, at least 12 of which are pure or near-pure and trivially
-testable with no network or I/O:
+The project now has a comprehensive pure-function test suite covering 24 functions:
 
 | Function | Test focus |
 |---|---|
@@ -130,38 +112,37 @@ testable with no network or I/O:
 | `build_params` | each flag independently; `source="all"` omitted; `top ≤ 0` omitted |
 | `read_cache` | cache hit, TTL expired, corrupt JSON, missing `data` key |
 | `write_cache` + `read_cache` round-trip | write then read returns identical dict |
-| `interactive_menu` | requires mocking `console.input`; verify Namespace attribute names |
+| `interactive_menu` | mocked `console.input`; verify `Args` attribute names |
 
-`export_csv` and `export_json` should write to `tempfile` destinations and assert
-file contents.
+`export_csv` and `export_json` write to `tempfile` destinations and assert file contents.
 
 **Setup:**
 
 ```toml
-# pyproject.toml — add under [project.optional-dependencies]
+# pyproject.toml — under [project.optional-dependencies]
 [project.optional-dependencies]
 dev = [
     "pytest>=8.0",
     "pytest-cov>=5.0",
+    "pytest-mock>=3.14",
+    "pytest-xdist>=3.5",
     "pyright>=1.1",
+    "respx>=0.21",
 ]
 
 # [tool.pytest.ini_options]
 testpaths = ["tests"]
-addopts = "--cov=benchmarks --cov=benchmark_catalog"
+addopts = "--cov=benchmarks --cov=benchmark_catalog --cov-fail-under=70"
 ```
 
 ---
 
 ## 3. Cache Eviction and Size Limit
-**Severity:** Low · **Effort:** M
+**Severity:** Low · **Effort:** M · **Status:** ✅ Done
 
 **File:** `benchmarks.py` — `write_cache()`, `read_cache()`
 
-**Problem:** Every unique parameter set writes a new file with no eviction. Long-term
-users exploring many filter combinations will see unbounded growth in `cache/`.
-
-**Proposed approach — LRU count cap:**
+**Implemented approach — LRU count cap:**
 
 ```python
 MAX_CACHE_FILES = 200   # tunable constant at module level
@@ -174,29 +155,23 @@ def _evict_if_needed() -> None:
         CACHE_DIR.glob("*.json"),
         key=lambda p: p.stat().st_mtime,
     )
-    excess = len(files) - MAX_CACHE_FILES
+    # Reserve one slot for the file about to be written.
+    excess = len(files) - MAX_CACHE_FILES + 1
     if excess > 0:
         for stale in files[:excess]:
             stale.unlink()
 ```
 
-Call `_evict_if_needed()` at the top of `write_cache()` before writing.
-
-Alternative: size-based cap (sum of file sizes). Count-based is simpler and sufficient
-for JSON metadata responses of ~100 KB each (200 files ≈ 20 MB ceiling).
+`_evict_if_needed()` is called at the top of `write_cache()` before writing.
 
 ---
 
 ## 4. CSV Export — Flatten All Nested Dicts
-**Severity:** Low · **Effort:** M
+**Severity:** Low · **Effort:** M · **Status:** ✅ Done
 
 **File:** `benchmarks.py` — `export_csv()` (lines 346–370)
 
-**Problem:** Only `pricing` is expanded into flat columns (`pricing.prompt`,
-`pricing.completion`). Other nested dicts like `tournament_stats` (Design Arena) and
-`meta` are serialized as Python repr strings or dropped.
-
-**Proposed helper:**
+**Implemented helper:**
 
 ```python
 def _flatten_row(item: dict[str, Any]) -> dict[str, Any]:
@@ -205,23 +180,24 @@ def _flatten_row(item: dict[str, Any]) -> dict[str, Any]:
         if isinstance(value, dict):
             for child_key, child_val in value.items():
                 row[f"{key}.{child_key}"] = child_val
+        elif isinstance(value, list):
+            row[key] = json.dumps(value)
         else:
             row[key] = value
     return row
 ```
 
-Replace the inline field-building loop in `export_csv` with a call to `_flatten_row`,
-removing the special-case `pricing` block. This generalises to any nested dict the API
-returns now or in future versions.
+`export_csv` now uses `_flatten_row` for all items, generalising to any nested dict the
+API returns now or in future versions.
 
 ---
 
 ## 5. Type-Checker Configuration
-**Severity:** Low · **Effort:** S
+**Severity:** Low · **Effort:** S · **Status:** ✅ Done
 
 **File:** `pyproject.toml`
 
-Add `pyright` config (lighter weight than mypy for this codebase, no stubs needed):
+Added `pyright` config:
 
 ```toml
 [tool.pyright]
@@ -229,33 +205,19 @@ pythonVersion = "3.13"
 reportMissingTypeStubs = false
 reportUnusedVariable = true
 reportUnusedImport = true
+reportDuplicateImport = true
 ```
 
-Or, for stricter enforcement, `mypy`:
-
-```toml
-[tool.mypy]
-python_version = "3.13"
-strict = true
-```
-
-Then add `pyright` (or `mypy`) to the `dev` optional-dependencies group from item 2.
-
-**Benefit:** Would have caught the `Namespace` attribute-name drift (#17) at build time
-if the interactive path used the same typed interface as the argparse path.
+`pyright` is included in the `dev` optional-dependencies group.
 
 ---
 
 ## 6. Replace `argparse.Namespace` with a Dataclass
-**Severity:** Medium · **Effort:** M
+**Severity:** Medium · **Effort:** M · **Status:** ✅ Done
 
 **File:** `benchmarks.py` — `interactive_menu()`, `main()`, `build_params()`
 
-**Problem:** `interactive_menu()` manually constructs `argparse.Namespace` with
-hardcoded field names. This is fragile — any rename in the argparse parser or in
-`build_params` silently breaks one path but not the other.
-
-**Proposed change:**
+**Implemented change:**
 
 ```python
 from dataclasses import dataclass
@@ -276,74 +238,49 @@ class Args:
     interactive: bool = False
 ```
 
-After `parser.parse_args()`, convert:
-
-```python
-ns = parser.parse_args(raw_argv)
-args = Args(
-    source=ns.source,
-    task=ns.task,
-    ...
-    json_out=ns.json_out,
-    ...
-)
-```
-
 `interactive_menu()` returns `Args(...)` directly. `build_params` and `main()` both
-receive a typed `Args` — static analysers can verify field consistency.
-
-**Note:** This is a structural improvement. The current `Namespace` fix (#17) has
-already eliminated the runtime crash; this item prevents regression.
+receive a typed `Args`. A `_namespace_to_args` bridge preserves argparse compatibility.
 
 ---
 
 ## 7. Rate-Limit Retry with Exponential Backoff
-**Severity:** Low · **Effort:** M
+**Severity:** Low · **Effort:** M · **Status:** ✅ Done
 
 **File:** `benchmarks.py` — `fetch_benchmarks()`
 
-**Problem:** A 429 response exits immediately. The user's own cache may have a fresh
-copy, but the tool doesn't fall back to it, nor does it retry.
-
-**Proposed change:**
+**Implemented change:**
 
 ```python
-import random
-
-MAX_RETRIES = 2
-BASE_DELAY_S = 5
-
-def fetch_benchmarks(..., retries: int = MAX_RETRIES) -> dict[str, Any]:
+max_retries = 2
+base_delay_s = 5.0
+...
+for attempt in range(max_retries + 1):
     ...
-    for attempt in range(retries + 1):
-        ...
-        if response.status_code == 429:
-            if attempt < retries:
-                delay = BASE_DELAY_S * (2 ** attempt) + random.uniform(0, 1)
-                console.print(f"[yellow]Rate limited. Retrying in {delay:.1f}s...[/yellow]")
-                time.sleep(delay)
-                continue
-            raise BenchmarkRateLimitError(...)
-        ...
+    if response.status_code == 429:
+        if attempt < max_retries:
+            delay = base_delay_s * (2 ** attempt) + random_fn(0, 1)
+            get_console().print(f"[yellow]Rate limited. Retrying in {delay:.1f}s...[/yellow]")
+            sleep_fn(delay)
+            continue
+        last_error = BenchmarkRateLimitError(
+            "OpenRouter allows 30 requests/min and 500 requests/day. "
+            "Wait a moment and try again, or rely on cache.",
+        )
+        break
 ```
 
-This keeps the CLI responsive without silently swallowing errors. The cache-first
-behaviour already in `fetch_benchmarks` (check cache before network) provides the
-fast path.
+The cache-first behaviour already in `fetch_benchmarks` (check cache before network)
+provides the fast path.
 
 ---
 
 ## 8. HTTP Timeout Granularity
-**Severity:** Low · **Effort:** S
+**Severity:** Low · **Effort:** S · **Status:** ✅ Done
 
 **File:** `benchmarks.py` — `fetch_benchmarks()` line 86
 
-Current:
-```python
-httpx.Client(timeout=30.0)
-```
+**Implemented change:**
 
-Change to:
 ```python
 httpx.Client(timeout=httpx.Timeout(
     connect=10.0,
@@ -354,39 +291,37 @@ httpx.Client(timeout=httpx.Timeout(
 ```
 
 Rationale: benchmark responses can be large (many model entries); a 30-second total
-budget penalises slow reads. Connect and write can stay short; read gets headroom.
+budget penalises slow reads. Connect and write stay short; read gets headroom.
 
 ---
 
 ## 9. Whitespace Cleanup in `benchmarks.py`
-**Severity:** Low · **Effort:** S
+**Severity:** Low · **Effort:** S · **Status:** ✅ Done
 
-The comment block added for `parse_price` (item #14) has a stray double blank line
-before it (lines 133–135). Collapse to one blank line to match PEP 8 spacing around
+The comment block for `parse_price` now follows standard PEP 8 spacing around
 top-level definitions.
 
 ---
 
-## Execution Order
+## Execution Order (Completed)
 
 ```
-Session 1 (this session — quick wins)
-  ├── 0-A  Restore exports/ to .gitignore
-  ├── 0-B  Remove AA_INDEXES from benchmark_catalog.py
-  ├── 9    Whitespace cleanup
-  └── 5    Add pyright config to pyproject.toml + dev deps
+Session 1 (quick wins)
+  ├── 0-A  Restore exports/ to .gitignore          ✅
+  ├── 0-B  Remove AA_INDEXES from benchmark_catalog.py  ✅
+  ├── 9    Whitespace cleanup                       ✅
+  └── 5    Add pyright config to pyproject.toml     ✅
 
-Session 2 (next focused session — structural)
-  ├── 1    sys.exit → exception hierarchy in benchmarks.py
-  ├── 2    Scaffold tests/ and write pure-function test suite
-  └── 6    Args dataclass + Namespace→Args conversion
+Session 2 (structural)
+  ├── 1    sys.exit → exception hierarchy           ✅
+  ├── 2    Scaffold tests/ and write pure-function test suite  ✅
+  └── 6    Args dataclass + Namespace→Args conversion  ✅
 
 Session 3 (polish)
-  ├── 3    Cache eviction (_evict_if_needed)
-  ├── 4    CSV flatten-all-nested-dicts
-  ├── 7    Rate-limit retry/backoff
-  └── 8    HTTP timeout granularity
+  ├── 3    Cache eviction (_evict_if_needed)         ✅
+  ├── 4    CSV flatten-all-nested-dicts             ✅
+  ├── 7    Rate-limit retry/backoff                 ✅
+  └── 8    HTTP timeout granularity                 ✅
 ```
 
-Sessions 1 and 2 are independent of each other. Session 3 can run after Session 2
-finishes and tests are green.
+All sessions are complete. The codebase is production-ready.

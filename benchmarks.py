@@ -10,7 +10,7 @@ import sys
 import time
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
 import httpx
 from dotenv import load_dotenv
@@ -27,11 +27,18 @@ from benchmark_catalog import (
     TASK_TYPES,
 )
 
+load_dotenv()
+
 API_URL = "https://openrouter.ai/api/v1/benchmarks"
 CACHE_DIR = Path(__file__).parent / "cache"
 CACHE_TTL_SECONDS = 3600
 MAX_CACHE_FILES = 200
+DEFAULT_TOP = 20
 console = Console()
+
+
+def get_console() -> Console:
+    return console
 
 
 class BenchmarkError(Exception):
@@ -75,7 +82,6 @@ class Args:
 
 
 def get_api_key() -> str:
-    load_dotenv()
     key = os.getenv("OPENROUTER_API_KEY", "").strip()
     if not key or key == "your-openrouter-api-key-here":
         raise BenchmarkAuthError(
@@ -137,6 +143,8 @@ def fetch_benchmarks(
     params: dict[str, Any],
     use_cache: bool,
     ttl: int,
+    _sleep: Callable[[float], None] | None = None,
+    _random: Callable[[float, float], float] | None = None,
 ) -> dict[str, Any]:
     if use_cache:
         cached = read_cache(params, ttl)
@@ -151,6 +159,8 @@ def fetch_benchmarks(
         write=10.0,
         pool=10.0,
     )) as client:
+        sleep_fn = _sleep or time.sleep
+        random_fn = _random or random.uniform
         last_error: BenchmarkError | None = None
         for attempt in range(max_retries + 1):
             try:
@@ -160,9 +170,9 @@ def fetch_benchmarks(
                 break
             if response.status_code == 429:
                 if attempt < max_retries:
-                    delay = base_delay_s * (2 ** attempt) + random.uniform(0, 1)
-                    console.print(f"[yellow]Rate limited. Retrying in {delay:.1f}s...[/yellow]")
-                    time.sleep(delay)
+                    delay = base_delay_s * (2 ** attempt) + random_fn(0, 1)
+                    get_console().print(f"[yellow]Rate limited. Retrying in {delay:.1f}s...[/yellow]")
+                    sleep_fn(delay)
                     continue
                 last_error = BenchmarkRateLimitError(
                     "OpenRouter allows 30 requests/min and 500 requests/day. "
@@ -341,6 +351,7 @@ def render_or_table(items: list[dict[str, Any]], top: int) -> Table:
         table.add_column("Tasks", justify="right")
         table.add_column("Last Run", style="dim")
         for idx, it in enumerate(classic[:top], start=1):
+            cost = it.get("avg_cost_per_task")
             table.add_row(
                 str(idx),
                 it.get("display_name", "—"),
@@ -348,9 +359,7 @@ def render_or_table(items: list[dict[str, Any]], top: int) -> Table:
                 it.get("benchmark_type", "—"),
                 fmt_score(it.get("accuracy"), 1.0),
                 fmt_score(it.get("accuracy_stddev"), 1.0),
-                f"${it['avg_cost_per_task']:.4f}"
-                if isinstance(it.get("avg_cost_per_task"), (int, float))
-                else "—",
+                f"${cost:.4f}" if isinstance(cost, (int, float)) else "—",
                 str(it.get("total_tasks") or "—"),
                 (it.get("last_run_timestamp") or "—")[:10],
             )
@@ -369,6 +378,8 @@ def render_or_table(items: list[dict[str, Any]], top: int) -> Table:
         table.add_column("Engine", style="dim")
         table.add_column("Surface", style="dim")
         for idx, it in enumerate(search[:top], start=1):
+            cost = it.get("avg_cost_per_task")
+            latency = it.get("avg_latency_per_task_ms")
             table.add_row(
                 str(idx),
                 it.get("display_name", "—"),
@@ -376,12 +387,8 @@ def render_or_table(items: list[dict[str, Any]], top: int) -> Table:
                 it.get("benchmark_type", "—"),
                 fmt_score(it.get("primary_score"), 1.0),
                 it.get("primary_metric", "—"),
-                f"${it['avg_cost_per_task']:.4f}"
-                if isinstance(it.get("avg_cost_per_task"), (int, float))
-                else "—",
-                f"{it['avg_latency_per_task_ms']:.0f}"
-                if isinstance(it.get("avg_latency_per_task_ms"), (int, float))
-                else "—",
+                f"${cost:.4f}" if isinstance(cost, (int, float)) else "—",
+                f"{latency:.0f}" if isinstance(latency, (int, float)) else "—",
                 it.get("search_engine", "—"),
                 it.get("search_surface", "—"),
             )
@@ -447,6 +454,8 @@ def _flatten_row(item: dict[str, Any]) -> dict[str, Any]:
         if isinstance(value, dict):
             for child_key, child_val in value.items():
                 row[f"{key}.{child_key}"] = child_val
+        elif isinstance(value, list):
+            row[key] = json.dumps(value)
         else:
             row[key] = value
     return row
@@ -519,9 +528,9 @@ def interactive_menu() -> Args:
     ).strip()
     top_raw = console.input("[bold]Top N (default 20):[/bold] ").strip()
     try:
-        top = int(top_raw) if top_raw else 20
+        top = int(top_raw) if top_raw else DEFAULT_TOP
     except ValueError:
-        top = 20
+        top = DEFAULT_TOP
 
     return Args(
         source=source,
@@ -543,14 +552,14 @@ def build_params(args: Args) -> dict[str, Any]:
     params: dict[str, Any] = {}
     if args.source and args.source != "all":
         params["source"] = args.source
-    if args.task:
-        params["task_type"] = args.task
-    if args.benchmark:
-        params["benchmark_type"] = args.benchmark
-    if args.arena:
-        params["arena"] = args.arena
-    if args.category:
-        params["category"] = args.category
+    if args.task and args.task.strip():
+        params["task_type"] = args.task.strip()
+    if args.benchmark and args.benchmark.strip():
+        params["benchmark_type"] = args.benchmark.strip()
+    if args.arena and args.arena.strip():
+        params["arena"] = args.arena.strip()
+    if args.category and args.category.strip():
+        params["category"] = args.category.strip()
     if args.top and args.top > 0:
         params["max_results"] = args.top
     return params
@@ -573,7 +582,7 @@ def _namespace_to_args(ns: argparse.Namespace) -> Args:
     )
 
 
-def main() -> None:
+def main(argv: list[str] | None = None) -> None:
     parser = argparse.ArgumentParser(
         prog="benchmarks.py",
         description="Query the OpenRouter benchmark catalog from your terminal.",
@@ -600,7 +609,7 @@ def main() -> None:
         help="Force interactive menu even when flags are passed",
     )
 
-    raw_argv = sys.argv[1:]
+    raw_argv = argv if argv is not None else sys.argv[1:]
     if not raw_argv:
         args: Args = interactive_menu()
     else:

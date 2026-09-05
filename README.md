@@ -117,6 +117,31 @@ uv run benchmarks.py --task coding --no-cache
 | `--interactive` | Force the menu even when flags are passed |
 | `--help` | Show help |
 
+## OpenRouter MCP + Agent Skill
+
+This repo also ships setup files for the [OpenRouter MCP server](https://mcp.openrouter.ai/mcp) and a reusable agent skill (`openrouter-agent`). The goal is a one-stop shop: CLI app + MCP server + agent harness integration, with tests so setup is guaranteed to work if you follow the steps.
+
+### Folders
+
+- `tools/MCP/` — remote server URL reference, per-harness config guides (`claude.md`, `codex.md`, `opencode.md`, `cursor.md`, `hermes.md`), auth instructions, and `test_setup.py`.
+- `skills/openrouter-agent/` — agent skill package with `SKILL.md`, harness guides (`harness/`), prompt templates (`prompts/`), `install-all.md`, and `validate_config.py`.
+
+### Setup (CLI → MCP → Skill)
+
+1. **CLI**: `uv sync`, copy `.env.example` → `.env`, add `OPENROUTER_API_KEY`.
+2. **MCP**: add `https://mcp.openrouter.ai/mcp` to your MCP client (see `tools/MCP/*.md`), complete the OAuth login.
+3. **Agent skill**: load `skills/openrouter-agent/SKILL.md` in your harness, reference the harness guide, and use the prompt templates in `prompts/`.
+
+Reference: `skills/openrouter-agent/install-all.md`.
+
+### Verify
+
+```bash
+python tools/MCP/test_setup.py
+python skills/openrouter-agent/validate_config.py
+uv run pytest tests/test_mcp_setup.py tests/test_skill_config.py -v
+```
+
 ## Benchmark catalog (what do these benchmarks measure?)
 
 | ID | What it measures | Source |

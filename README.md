@@ -178,3 +178,12 @@ This tool is a thin client over the OpenRouter `/v1/benchmarks` endpoint. All be
 ## License
 
 [MIT](./LICENSE) — Copyright (c) 2026 AlexJ-StL.
+
+## Contributing
+
+See [CONTRIBUTING.md](./CONTRIBUTING.md) for development setup, conventions, and
+the pull-request workflow.
+
+## Changelog
+
+See [CHANGELOG.md](./CHANGELOG.md) for version-to-version changes.

@@ -245,23 +245,37 @@ def filter_by_creator(items: list[dict[str, Any]], creator: str | None) -> list[
     return [it for it in items if creator_of(it.get("model_permaslug")).lower() == needle]
 
 
+_AA_SCORE_KEYS = ("intelligence_index", "coding_index", "agentic_index")
+_DA_SCORE_KEYS = ("elo",)
+
+
+def _first_float(entry: dict[str, Any], keys: tuple[str, ...]) -> float:
+    """Return the first non-None float value from *keys* in *entry*.
+
+    Falls back to 0.0 when every key is missing or None.
+    """
+    for key in keys:
+        val = entry.get(key)
+        if val is not None:
+            return val
+    return 0.0
+
+
 def sort_by_score_desc(items: list[dict[str, Any]], source: str) -> list[dict[str, Any]]:
-    def _pick(entry: dict[str, Any]) -> float:
-        val: float | None = None
-        if source == "artificial-analysis":
-            val = entry.get("intelligence_index")
-            if val is None:
-                val = entry.get("coding_index")
-            if val is None:
-                val = entry.get("agentic_index")
-        elif source == "design-arena":
-            val = entry.get("elo")
-        elif source == "openrouter":
+    if source == "openrouter":
+        def _pick(entry: dict[str, Any]) -> float:
             if entry.get("benchmark_type", "").startswith("search_"):
-                val = entry.get("primary_score")
-            else:
-                val = entry.get("accuracy")
-        return val if val is not None else 0.0
+                return _first_float(entry, ("primary_score", "accuracy"))
+            return _first_float(entry, ("accuracy", "primary_score"))
+    elif source == "artificial-analysis":
+        def _pick(entry: dict[str, Any]) -> float:
+            return _first_float(entry, _AA_SCORE_KEYS)
+    elif source == "design-arena":
+        def _pick(entry: dict[str, Any]) -> float:
+            return _first_float(entry, _DA_SCORE_KEYS)
+    else:
+        def _pick(entry: dict[str, Any]) -> float:  # type: ignore[misc]
+            return 0.0
 
     return sorted(items, key=_pick, reverse=True)
 
@@ -333,67 +347,83 @@ def render_da_table(items: list[dict[str, Any]], top: int) -> Table:
     return table
 
 
+def _or_common_columns(table: Table) -> None:
+    """Add the four columns shared by both OpenRouter table blocks."""
+    table.add_column("#", justify="right", style="dim")
+    table.add_column("Model", style="bold")
+    table.add_column("Creator", style="cyan")
+    table.add_column("Benchmark", style="magenta")
+
+
+def _add_classic_block(table: Table, items: list[dict[str, Any]], top: int) -> None:
+    """Add classic OpenRouter benchmark columns and rows."""
+    table.add_column("Accuracy", justify="right", style="bold")
+    table.add_column("±Std", justify="right")
+    table.add_column("$/task", justify="right")
+    table.add_column("Tasks", justify="right")
+    table.add_column("Last Run", style="dim")
+    for idx, it in enumerate(items[:top], start=1):
+        cost = it.get("avg_cost_per_task")
+        table.add_row(
+            str(idx),
+            it.get("display_name", "—"),
+            creator_of(it.get("model_permaslug")),
+            it.get("benchmark_type", "—"),
+            fmt_score(it.get("accuracy"), 1.0),
+            fmt_score(it.get("accuracy_stddev"), 1.0),
+            f"${cost:.4f}" if isinstance(cost, (int, float)) else "—",
+            str(it.get("total_tasks") or "—"),
+            (it.get("last_run_timestamp") or "—")[:10],
+        )
+
+
+def _add_search_block(table: Table, items: list[dict[str, Any]], top: int) -> None:
+    """Add search OpenRouter benchmark columns and rows."""
+    table.add_column("Score", justify="right", style="bold")
+    table.add_column("Metric", style="dim")
+    table.add_column("$/task", justify="right")
+    table.add_column("Latency ms", justify="right")
+    table.add_column("Engine", style="dim")
+    table.add_column("Surface", style="dim")
+    for idx, it in enumerate(items[:top], start=1):
+        cost = it.get("avg_cost_per_task")
+        latency = it.get("avg_latency_per_task_ms")
+        table.add_row(
+            str(idx),
+            it.get("display_name", "—"),
+            creator_of(it.get("model_permaslug")),
+            it.get("benchmark_type", "—"),
+            fmt_score(it.get("primary_score"), 1.0),
+            it.get("primary_metric", "—"),
+            f"${cost:.4f}" if isinstance(cost, (int, float)) else "—",
+            f"{latency:.0f}" if isinstance(latency, (int, float)) else "—",
+            it.get("search_engine", "—"),
+            it.get("search_surface", "—"),
+        )
+
+
 def render_or_table(items: list[dict[str, Any]], top: int) -> Table:
     classic = [it for it in items if not it.get("benchmark_type", "").startswith("search_")]
     search = [it for it in items if it.get("benchmark_type", "").startswith("search_")]
     if not classic and not search:
         return Table(title="OpenRouter Benchmarks")
     table = Table(title="OpenRouter Benchmarks", show_lines=False)
-
+    _or_common_columns(table)
     if classic:
-        table.add_column("#", justify="right", style="dim")
-        table.add_column("Model", style="bold")
-        table.add_column("Creator", style="cyan")
-        table.add_column("Benchmark", style="magenta")
-        table.add_column("Accuracy", justify="right", style="bold")
-        table.add_column("±Std", justify="right")
-        table.add_column("$/task", justify="right")
-        table.add_column("Tasks", justify="right")
-        table.add_column("Last Run", style="dim")
-        for idx, it in enumerate(classic[:top], start=1):
-            cost = it.get("avg_cost_per_task")
-            table.add_row(
-                str(idx),
-                it.get("display_name", "—"),
-                creator_of(it.get("model_permaslug")),
-                it.get("benchmark_type", "—"),
-                fmt_score(it.get("accuracy"), 1.0),
-                fmt_score(it.get("accuracy_stddev"), 1.0),
-                f"${cost:.4f}" if isinstance(cost, (int, float)) else "—",
-                str(it.get("total_tasks") or "—"),
-                (it.get("last_run_timestamp") or "—")[:10],
-            )
-
+        _add_classic_block(table, classic, top)
     if search:
         if classic:
             table.add_section()
-        table.add_column("#", justify="right", style="dim")
-        table.add_column("Model", style="bold")
-        table.add_column("Creator", style="cyan")
-        table.add_column("Benchmark", style="magenta")
-        table.add_column("Score", justify="right", style="bold")
-        table.add_column("Metric", style="dim")
-        table.add_column("$/task", justify="right")
-        table.add_column("Latency ms", justify="right")
-        table.add_column("Engine", style="dim")
-        table.add_column("Surface", style="dim")
-        for idx, it in enumerate(search[:top], start=1):
-            cost = it.get("avg_cost_per_task")
-            latency = it.get("avg_latency_per_task_ms")
-            table.add_row(
-                str(idx),
-                it.get("display_name", "—"),
-                creator_of(it.get("model_permaslug")),
-                it.get("benchmark_type", "—"),
-                fmt_score(it.get("primary_score"), 1.0),
-                it.get("primary_metric", "—"),
-                f"${cost:.4f}" if isinstance(cost, (int, float)) else "—",
-                f"{latency:.0f}" if isinstance(latency, (int, float)) else "—",
-                it.get("search_engine", "—"),
-                it.get("search_surface", "—"),
-            )
-
+        _add_search_block(table, search, top)
     return table
+
+
+_RENDERERS: dict[str, Callable[[list[dict[str, Any]], int], Table]] = {
+    "artificial-analysis": render_aa_table,
+    "design-arena": render_da_table,
+    "openrouter": render_or_table,
+}
+"""Dispatch from source name to its table renderer."""
 
 
 def render_results(
@@ -410,12 +440,9 @@ def render_results(
         if not bucket:
             continue
         bucket = sort_by_score_desc(bucket, source)
-        if source == "artificial-analysis":
-            tables.append(render_aa_table(bucket, top))
-        elif source == "design-arena":
-            tables.append(render_da_table(bucket, top))
-        elif source == "openrouter":
-            tables.append(render_or_table(bucket, top))
+        renderer = _RENDERERS.get(source)
+        if renderer is not None:
+            tables.append(renderer(bucket, top))
     return tables
 
 

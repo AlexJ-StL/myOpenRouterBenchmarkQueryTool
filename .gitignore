@@ -8,6 +8,9 @@ __pycache__/
 .env.*.local
 cache/
 exports/
+.coverage
+.pytest_cache/
+.kilo/
 .DS_Store
 Thumbs.db
 .idea/

@@ -37,7 +37,7 @@ addopts = "--cov=benchmarks --cov=benchmark_catalog --cov-fail-under=70"
 [tool.pyright]
 pythonVersion = "3.13"
 reportMissingTypeStubs = false
-reportMissingImports = false
+reportMissingImports = true
 reportUnusedVariable = true
 reportUnusedImport = true
 reportDuplicateImport = true

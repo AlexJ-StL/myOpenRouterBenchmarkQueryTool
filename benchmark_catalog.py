@@ -1,17 +1,21 @@
-SOURCES = {
+from __future__ import annotations
+
+from typing import Final
+
+SOURCES: Final = {
     "artificial-analysis": "Composite indexes from Artificial Analysis (aggregated)",
     "design-arena": "Head-to-head ELO from Design Arena battles",
     "openrouter": "OpenRouter's own evals (GPQA, tau-bench, search benchmarks)",
 }
 
-TASK_TYPES = {
+TASK_TYPES: Final = {
     "coding": "Programming and code generation tasks",
     "intelligence": "General reasoning and knowledge",
     "agentic": "Autonomous agent / tool-use tasks",
     "search": "Web search and retrieval-augmented tasks",
 }
 
-BENCHMARK_TYPES = {
+BENCHMARK_TYPES: Final = {
     "gpqa_diamond": "Graduate-level science and reasoning Q&A (accuracy, 0-1)",
     "tau_bench_verified_airline": "Agentic tool-use on airline customer service (accuracy, 0-1)",
     "search_browsecomp": "Hard multi-hop web research questions (accuracy, 0-1)",
@@ -20,13 +24,13 @@ BENCHMARK_TYPES = {
     "search_widesearch": "Broad web Q&A, evaluated by item-weighted F1 (0-1)",
 }
 
-DESIGN_ARENAS = {
+DESIGN_ARENAS: Final = {
     "models": "General model arena (code + non-code)",
     "builders": "App builder / product builder arena",
     "agents": "Agentic task arena",
 }
 
-DESIGN_CATEGORIES = {
+DESIGN_CATEGORIES: Final = {
     "codecategories": "General coding tasks",
     "uicomponent": "UI component generation",
     "gamedev": "Game development",

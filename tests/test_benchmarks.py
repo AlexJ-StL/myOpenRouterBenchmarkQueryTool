@@ -3,9 +3,6 @@ from __future__ import annotations
 import argparse
 import csv
 import json
-import os
-import tempfile
-from dataclasses import dataclass
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
@@ -48,6 +45,7 @@ from benchmarks import (
     _flatten_row,
     _namespace_to_args,
 )
+from rich.table import Table
 
 
 # ---------------------------------------------------------------------------
@@ -1291,3 +1289,92 @@ class TestIntegration:
             main(argv=["--json", str(out_json), "--source", "openrouter"])
             assert out_json.exists()
             assert json.loads(out_json.read_text()) == sample_data
+
+
+# ---------------------------------------------------------------------------
+# _first_float helper
+# ---------------------------------------------------------------------------
+
+class TestFirstFloat:
+    def test_returns_first_non_none(self):
+        entry = {"a": 1.0, "b": 2.0, "c": 3.0}
+        assert benchmarks._first_float(entry, ("a", "b", "c")) == 1.0
+
+    def test_skips_none_until_found(self):
+        entry = {"a": None, "b": 2.0}
+        assert benchmarks._first_float(entry, ("a", "b")) == 2.0
+
+    def test_returns_zero_when_all_none(self):
+        entry = {"a": None, "b": None}
+        assert benchmarks._first_float(entry, ("a", "b")) == 0.0
+
+    def test_returns_zero_when_keys_missing(self):
+        entry = {}
+        assert benchmarks._first_float(entry, ("a", "b")) == 0.0
+
+
+# ---------------------------------------------------------------------------
+# sort_by_score_desc edge cases
+# ---------------------------------------------------------------------------
+
+class TestSortByScoreDescEdgeCases:
+    def test_unknown_source_returns_zero_sorted(self):
+        items = [{"foo": 10.0}, {"foo": 5.0}]
+        result = sort_by_score_desc(items, "unknown-source")
+        assert result == items  # stable sort preserves order when all scores are 0
+
+    def test_openrouter_search_prefers_primary_score(self):
+        items = [
+            {"benchmark_type": "search_browsecomp", "primary_score": 0.9, "accuracy": 0.5},
+            {"benchmark_type": "search_hle", "primary_score": 0.7, "accuracy": 0.9},
+        ]
+        result = sort_by_score_desc(items, "openrouter")
+        assert result[0]["primary_score"] == 0.9
+
+    def test_openrouter_classic_prefers_accuracy(self):
+        items = [
+            {"benchmark_type": "gpqa_diamond", "accuracy": 0.9, "primary_score": 0.5},
+            {"benchmark_type": "tau_bench_verified_airline", "accuracy": 0.7, "primary_score": 0.9},
+        ]
+        result = sort_by_score_desc(items, "openrouter")
+        assert result[0]["accuracy"] == 0.9
+
+
+# ---------------------------------------------------------------------------
+# render_results edge cases
+# ---------------------------------------------------------------------------
+
+class TestRenderResultsEdgeCases:
+    def test_unknown_source_ignored(self):
+        data = {"data": [
+            {"source": "mystery-source", "display_name": "M1",
+             "model_permaslug": "c/m", "coding_index": 80.0,
+             "intelligence_index": 90.0, "agentic_index": 50.0,
+             "pricing": {}},
+        ]}
+        tables = render_results(data, creator=None, top=2)
+        assert tables == []
+
+    def test_renderers_dispatch_covers_all_known_sources(self):
+        for source in ("artificial-analysis", "design-arena", "openrouter"):
+            assert source in benchmarks._RENDERERS
+
+
+# ---------------------------------------------------------------------------
+# _RENDERERS dispatch dict
+# ---------------------------------------------------------------------------
+
+class TestRenderersDispatch:
+    def test_all_known_sources_have_renderer(self):
+        for source in benchmarks.SOURCES:
+            assert source in benchmarks._RENDERERS
+
+    def test_renderer_callable_returns_table(self):
+        items = [
+            {"display_name": "M1", "model_permaslug": "anthropic/claude",
+             "coding_index": 80.0, "intelligence_index": 90.0,
+             "agentic_index": 50.0, "pricing": {}},
+        ]
+        table = benchmarks._RENDERERS["artificial-analysis"](items, 1)
+        assert isinstance(table, Table)
+        assert len(table.rows) == 1

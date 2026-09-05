@@ -41,7 +41,6 @@ from benchmarks import (
     render_results,
     sort_by_score_desc,
     write_cache,
-    _evict_if_needed,
     _flatten_row,
     _namespace_to_args,
 )
@@ -51,6 +50,7 @@ from rich.table import Table
 # ---------------------------------------------------------------------------
 # cache_key
 # ---------------------------------------------------------------------------
+
 
 class TestCacheKey:
     def test_deterministic(self):
@@ -67,9 +67,10 @@ class TestCacheKey:
 # parse_price / fmt_price
 # ---------------------------------------------------------------------------
 
+
 class TestParsePrice:
     def test_normal(self):
-        assert parse_price("0.001") == pytest.approx(1.0)
+        assert parse_price("0.001") == pytest.approx(1_000.0)
 
     def test_none(self):
         assert parse_price(None) is None
@@ -82,11 +83,11 @@ class TestParsePrice:
 
 
 class TestFmtPrice:
-    def test_under_one_cent(self):
-        assert fmt_price("0.0004") == "$0.40"
+    def test_fractional_cent_per_million(self):
+        assert fmt_price("0.0004") == "$400.00"
 
-    def test_over_one_cent(self):
-        assert fmt_price("0.01") == "$10.00"
+    def test_standard_pricing_per_million(self):
+        assert fmt_price("0.01") == "$10000.00"
 
     def test_none(self):
         assert fmt_price(None) == "—"
@@ -98,6 +99,7 @@ class TestFmtPrice:
 # ---------------------------------------------------------------------------
 # fmt_score
 # ---------------------------------------------------------------------------
+
 
 class TestFmtScore:
     def test_none(self):
@@ -113,6 +115,7 @@ class TestFmtScore:
 # ---------------------------------------------------------------------------
 # creator_of
 # ---------------------------------------------------------------------------
+
 
 class TestCreatorOf:
     def test_normal_slug(self):
@@ -132,6 +135,7 @@ class TestCreatorOf:
 # filter_by_creator
 # ---------------------------------------------------------------------------
 
+
 class TestFilterByCreator:
     def test_none_returns_all(self):
         items = [{"model_permaslug": "anthropic/claude"}, {"model_permaslug": "openai/gpt"}]
@@ -149,6 +153,7 @@ class TestFilterByCreator:
 # ---------------------------------------------------------------------------
 # sort_by_score_desc
 # ---------------------------------------------------------------------------
+
 
 class TestSortByScoreDesc:
     def test_aa_fallback_order(self):
@@ -189,6 +194,7 @@ class TestSortByScoreDesc:
 # group_by_source
 # ---------------------------------------------------------------------------
 
+
 class TestGroupBySource:
     def test_unknown_source_bucketed(self):
         items = [{"source": None}]
@@ -209,6 +215,7 @@ class TestGroupBySource:
 # ---------------------------------------------------------------------------
 # build_params
 # ---------------------------------------------------------------------------
+
 
 class TestBuildParams:
     def test_all_set(self):
@@ -238,6 +245,7 @@ class TestBuildParams:
 # ---------------------------------------------------------------------------
 # read_cache / write_cache round-trip
 # ---------------------------------------------------------------------------
+
 
 class TestCacheRoundTrip:
     def test_write_and_read(self, tmp_path):
@@ -294,6 +302,7 @@ class TestCacheRoundTrip:
 # export_json / export_csv
 # ---------------------------------------------------------------------------
 
+
 class TestExportJson:
     def test_writes_file(self, tmp_path):
         data = {"data": [{"id": 1}], "meta": {}}
@@ -305,10 +314,12 @@ class TestExportJson:
 
 class TestExportCsv:
     def test_writes_flat_rows(self, tmp_path):
-        data = {"data": [
-            {"name": "a", "value": 1, "pricing": {"prompt": "0.001"}},
-            {"name": "b", "value": 2},
-        ]}
+        data = {
+            "data": [
+                {"name": "a", "value": 1, "pricing": {"prompt": "0.001"}},
+                {"name": "b", "value": 2},
+            ]
+        }
         dest = tmp_path / "out.csv"
         export_csv(data, str(dest))
         assert dest.exists()
@@ -328,6 +339,7 @@ class TestExportCsv:
 # ---------------------------------------------------------------------------
 # Exception hierarchy
 # ---------------------------------------------------------------------------
+
 
 class TestExceptionHierarchy:
     def test_all_subclasses_of_benchmark_error(self):
@@ -352,6 +364,7 @@ class TestExceptionHierarchy:
 # ---------------------------------------------------------------------------
 # _namespace_to_args
 # ---------------------------------------------------------------------------
+
 
 class TestNamespaceToArgs:
     def test_full_conversion(self):
@@ -394,6 +407,7 @@ class TestNamespaceToArgs:
 # Args dataclass defaults
 # ---------------------------------------------------------------------------
 
+
 class TestArgsDefaults:
     def test_defaults(self):
         args = Args()
@@ -409,6 +423,7 @@ class TestArgsDefaults:
 # ---------------------------------------------------------------------------
 # get_api_key
 # ---------------------------------------------------------------------------
+
 
 class TestGetApiKey:
     def test_missing_key_raises(self, monkeypatch):
@@ -429,6 +444,7 @@ class TestGetApiKey:
 # ---------------------------------------------------------------------------
 # fetch_benchmarks
 # ---------------------------------------------------------------------------
+
 
 class TestFetchBenchmarks:
     def test_cache_hit_returns_cached(self, tmp_path, monkeypatch):
@@ -466,8 +482,7 @@ class TestFetchBenchmarks:
 
     def test_200_without_cache_does_not_write(self):
         response_data = {"data": [{"id": 1}]}
-        with patch("httpx.Client") as mock_client_cls, \
-             patch.object(benchmarks, "write_cache") as mock_write:
+        with patch("httpx.Client") as mock_client_cls, patch.object(benchmarks, "write_cache") as mock_write:
             mock_client = mock_client_cls.return_value.__enter__.return_value
             mock_response = MagicMock()
             mock_response.status_code = 200
@@ -518,9 +533,11 @@ class TestFetchBenchmarks:
     def test_injected_sleep_prevents_real_delay(self):
         mock_response = MagicMock()
         mock_response.status_code = 429
-        with patch("httpx.Client") as mock_client_cls, \
-             patch.object(benchmarks, "get_console"), \
-             patch("benchmarks.time.sleep") as mock_sleep:
+        with (
+            patch("httpx.Client") as mock_client_cls,
+            patch.object(benchmarks, "get_console"),
+            patch("benchmarks.time.sleep") as mock_sleep,
+        ):
             mock_client = mock_client_cls.return_value.__enter__.return_value
             mock_client.get.return_value = mock_response
 
@@ -541,48 +558,53 @@ class TestFetchBenchmarks:
 # main
 # ---------------------------------------------------------------------------
 
+
 class TestMainArgv:
     def test_no_args_enters_interactive(self):
-        with patch.object(benchmarks, "interactive_menu") as mock_menu, \
-             patch.object(benchmarks, "get_api_key", return_value="sk-test"), \
-             patch.object(benchmarks, "fetch_benchmarks", return_value={"data": []}), \
-             patch.object(benchmarks, "render_results", return_value=[]), \
-             patch.object(benchmarks, "print_citation"):
+        with (
+            patch.object(benchmarks, "interactive_menu") as mock_menu,
+            patch.object(benchmarks, "get_api_key", return_value="sk-test"),
+            patch.object(benchmarks, "fetch_benchmarks", return_value={"data": []}),
+            patch.object(benchmarks, "render_results", return_value=[]),
+            patch.object(benchmarks, "print_citation"),
+        ):
             mock_menu.return_value = Args()
             main(argv=[])
             mock_menu.assert_called_once()
 
     def test_interactive_flag_forces_menu(self):
-        with patch.object(benchmarks, "interactive_menu") as mock_menu, \
-             patch.object(benchmarks, "get_api_key", return_value="sk-test"), \
-             patch.object(benchmarks, "fetch_benchmarks", return_value={"data": []}), \
-             patch.object(benchmarks, "render_results", return_value=[]), \
-             patch.object(benchmarks, "print_citation"):
+        with (
+            patch.object(benchmarks, "interactive_menu") as mock_menu,
+            patch.object(benchmarks, "get_api_key", return_value="sk-test"),
+            patch.object(benchmarks, "fetch_benchmarks", return_value={"data": []}),
+            patch.object(benchmarks, "render_results", return_value=[]),
+            patch.object(benchmarks, "print_citation"),
+        ):
             mock_menu.return_value = Args()
             main(argv=["--interactive"])
             mock_menu.assert_called_once()
 
     def test_json_export_only(self, tmp_path):
         out_file = tmp_path / "out.json"
-        with patch.object(benchmarks, "get_api_key", return_value="sk-test"), \
-             patch.object(benchmarks, "fetch_benchmarks", return_value={"data": [{"id": 1}], "meta": {}}), \
-             patch.object(benchmarks, "export_json") as mock_export_json, \
-             patch.object(benchmarks, "print_citation"):
+        with (
+            patch.object(benchmarks, "get_api_key", return_value="sk-test"),
+            patch.object(benchmarks, "fetch_benchmarks", return_value={"data": [{"id": 1}], "meta": {}}),
+            patch.object(benchmarks, "export_json") as mock_export_json,
+            patch.object(benchmarks, "print_citation"),
+        ):
             main(argv=["--json", str(out_file)])
-            mock_export_json.assert_called_once_with(
-                {"data": [{"id": 1}], "meta": {}}, str(out_file)
-            )
+            mock_export_json.assert_called_once_with({"data": [{"id": 1}], "meta": {}}, str(out_file))
 
     def test_csv_export_only(self, tmp_path):
         out_file = tmp_path / "out.csv"
-        with patch.object(benchmarks, "get_api_key", return_value="sk-test"), \
-             patch.object(benchmarks, "fetch_benchmarks", return_value={"data": [{"id": 1}], "meta": {}}), \
-             patch.object(benchmarks, "export_csv") as mock_export_csv, \
-             patch.object(benchmarks, "print_citation"):
+        with (
+            patch.object(benchmarks, "get_api_key", return_value="sk-test"),
+            patch.object(benchmarks, "fetch_benchmarks", return_value={"data": [{"id": 1}], "meta": {}}),
+            patch.object(benchmarks, "export_csv") as mock_export_csv,
+            patch.object(benchmarks, "print_citation"),
+        ):
             main(argv=["--csv", str(out_file)])
-            mock_export_csv.assert_called_once_with(
-                {"data": [{"id": 1}], "meta": {}}, str(out_file)
-            )
+            mock_export_csv.assert_called_once_with({"data": [{"id": 1}], "meta": {}}, str(out_file))
 
     def test_benchmark_error_exits_with_code_1(self):
         with patch.object(benchmarks, "get_api_key", side_effect=BenchmarkAuthError("test")):
@@ -594,6 +616,7 @@ class TestMainArgv:
 # ---------------------------------------------------------------------------
 # prompt_choice
 # ---------------------------------------------------------------------------
+
 
 class TestPromptChoice:
     def test_empty_options_returns_empty(self):
@@ -625,13 +648,16 @@ class TestPromptChoice:
 # interactive_menu
 # ---------------------------------------------------------------------------
 
+
 class TestInteractiveMenu:
     def test_returns_args_matching_selections(self):
-        with patch.object(
-            benchmarks, "prompt_choice",
-            side_effect=["design-arena", "models", "codecategories"],
-        ), patch.object(
-            benchmarks.console, "input", side_effect=["anthropic", "5"]
+        with (
+            patch.object(
+                benchmarks,
+                "prompt_choice",
+                side_effect=["design-arena", "models", "codecategories"],
+            ),
+            patch.object(benchmarks.console, "input", side_effect=["anthropic", "5"]),
         ):
             args = interactive_menu()
             assert isinstance(args, Args)
@@ -649,29 +675,33 @@ class TestInteractiveMenu:
 # main() — error handling and output routing
 # ---------------------------------------------------------------------------
 
+
 class TestMain:
     def test_auth_error_exits_with_code_1(self):
-        with patch.object(
-            benchmarks.sys, "argv", ["benchmarks.py", "--source", "openrouter"]
-        ), patch.object(
-            benchmarks, "get_api_key",
-            side_effect=BenchmarkAuthError("bad key"),
-        ), patch.object(benchmarks.console, "print") as mock_print:
+        with (
+            patch.object(benchmarks.sys, "argv", ["benchmarks.py", "--source", "openrouter"]),
+            patch.object(
+                benchmarks,
+                "get_api_key",
+                side_effect=BenchmarkAuthError("bad key"),
+            ),
+            patch.object(benchmarks.console, "print") as mock_print,
+        ):
             with pytest.raises(SystemExit) as exc_info:
                 main()
             assert exc_info.value.code == 1
             mock_print.assert_called()
 
     def test_rate_limit_error_exits_with_code_1(self):
-        with patch.object(
-            benchmarks.sys, "argv", ["benchmarks.py", "--source", "openrouter"]
-        ), patch.object(
-            benchmarks, "get_api_key", return_value="fake-key"
-        ), patch.object(
-            benchmarks, "build_params", return_value={}
-        ), patch.object(
-            benchmarks, "fetch_benchmarks",
-            side_effect=BenchmarkRateLimitError("429"),
+        with (
+            patch.object(benchmarks.sys, "argv", ["benchmarks.py", "--source", "openrouter"]),
+            patch.object(benchmarks, "get_api_key", return_value="fake-key"),
+            patch.object(benchmarks, "build_params", return_value={}),
+            patch.object(
+                benchmarks,
+                "fetch_benchmarks",
+                side_effect=BenchmarkRateLimitError("429"),
+            ),
         ):
             with pytest.raises(SystemExit) as exc_info:
                 main()
@@ -680,51 +710,44 @@ class TestMain:
     def test_success_renders_tables_and_citation(self):
         sample_data = {"data": [{"display_name": "M1"}], "meta": {"citation": "src"}}
         mock_table = MagicMock()
-        with patch.object(
-            benchmarks.sys, "argv", ["benchmarks.py", "--source", "openrouter", "--top", "3"]
-        ), patch.object(benchmarks, "get_api_key", return_value="fake-key"), \
-             patch.object(benchmarks, "build_params", return_value={"source": "openrouter"}), \
-             patch.object(
-                benchmarks, "fetch_benchmarks", return_value=sample_data
-            ) as mock_fetch, \
-             patch.object(
-                benchmarks, "render_results", return_value=[mock_table]
-            ) as mock_render, \
-             patch.object(benchmarks, "print_citation") as mock_cite, \
-             patch.object(benchmarks.console, "print") as mock_print:
+        with (
+            patch.object(benchmarks.sys, "argv", ["benchmarks.py", "--source", "openrouter", "--top", "3"]),
+            patch.object(benchmarks, "get_api_key", return_value="fake-key"),
+            patch.object(benchmarks, "build_params", return_value={"source": "openrouter"}),
+            patch.object(benchmarks, "fetch_benchmarks", return_value=sample_data) as mock_fetch,
+            patch.object(benchmarks, "render_results", return_value=[mock_table]) as mock_render,
+            patch.object(benchmarks, "print_citation") as mock_cite,
+            patch.object(benchmarks.console, "print") as mock_print,
+        ):
             main()
             mock_fetch.assert_called_once()
-            mock_render.assert_called_once_with(
-                sample_data, creator=None, top=3
-            )
+            mock_render.assert_called_once_with(sample_data, creator=None, top=3)
             mock_cite.assert_called_once_with(sample_data)
             mock_print.assert_any_call(mock_table)
 
     def test_json_export_skips_table_render(self):
         sample_data = {"data": [], "meta": {}}
-        with patch.object(
-            benchmarks.sys, "argv", ["benchmarks.py", "--json", "out.json"]
-        ), patch.object(benchmarks, "get_api_key", return_value="fake-key"), \
-             patch.object(benchmarks, "build_params", return_value={}), \
-             patch.object(
-                benchmarks, "fetch_benchmarks", return_value=sample_data
-            ), \
-             patch.object(benchmarks, "export_json") as mock_export, \
-             patch.object(benchmarks.console, "print") as mock_print, \
-             patch.object(benchmarks, "render_results") as mock_render, \
-             patch.object(benchmarks, "print_citation") as mock_cite:
+        with (
+            patch.object(benchmarks.sys, "argv", ["benchmarks.py", "--json", "out.json"]),
+            patch.object(benchmarks, "get_api_key", return_value="fake-key"),
+            patch.object(benchmarks, "build_params", return_value={}),
+            patch.object(benchmarks, "fetch_benchmarks", return_value=sample_data),
+            patch.object(benchmarks, "export_json") as mock_export,
+            patch.object(benchmarks.console, "print") as mock_print,
+            patch.object(benchmarks, "render_results") as mock_render,
+            patch.object(benchmarks, "print_citation") as mock_cite,
+        ):
             main()
             mock_export.assert_called_once_with(sample_data, "out.json")
             mock_render.assert_not_called()
             mock_cite.assert_not_called()
-            mock_print.assert_any_call(
-                "[dim](Exported only — no table rendered.)[/dim]"
-            )
+            mock_print.assert_any_call("[dim](Exported only — no table rendered.)[/dim]")
 
 
 # ---------------------------------------------------------------------------
 # fetch_benchmarks — retry behaviour
 # ---------------------------------------------------------------------------
+
 
 class TestFetchBenchmarksRetry:
     def test_retries_on_429_then_succeeds(self):
@@ -739,19 +762,16 @@ class TestFetchBenchmarksRetry:
         mock_client.__exit__ = MagicMock(return_value=False)
         mock_client.get.side_effect = [mock_429, mock_200]
 
-        with patch.object(benchmarks, "read_cache", return_value=None), \
-             patch("httpx.Client", return_value=mock_client), \
-             patch.object(benchmarks.console, "print") as mock_print, \
-             patch.object(benchmarks, "write_cache"):
-            result = fetch_benchmarks(
-                "fake-key", {}, use_cache=False, ttl=3600
-            )
+        with (
+            patch.object(benchmarks, "read_cache", return_value=None),
+            patch("httpx.Client", return_value=mock_client),
+            patch.object(benchmarks.console, "print") as mock_print,
+            patch.object(benchmarks, "write_cache"),
+        ):
+            result = fetch_benchmarks("fake-key", {}, use_cache=False, ttl=3600)
             assert result == {"data": [{"id": 1}]}
             assert mock_client.get.call_count == 2
-            retry_messages = [
-                c for c in mock_print.call_args_list
-                if "Rate limited" in str(c)
-            ]
+            retry_messages = [c for c in mock_print.call_args_list if "Rate limited" in str(c)]
             assert len(retry_messages) == 1
 
     def test_exhausts_retries_on_429(self):
@@ -762,13 +782,13 @@ class TestFetchBenchmarksRetry:
         mock_client.__exit__ = MagicMock(return_value=False)
         mock_client.get.return_value = mock_429
 
-        with patch.object(benchmarks, "read_cache", return_value=None), \
-             patch("httpx.Client", return_value=mock_client), \
-             patch.object(benchmarks, "write_cache"):
+        with (
+            patch.object(benchmarks, "read_cache", return_value=None),
+            patch("httpx.Client", return_value=mock_client),
+            patch.object(benchmarks, "write_cache"),
+        ):
             with pytest.raises(BenchmarkRateLimitError):
-                fetch_benchmarks(
-                    "fake-key", {}, use_cache=False, ttl=3600
-                )
+                fetch_benchmarks("fake-key", {}, use_cache=False, ttl=3600)
             assert mock_client.get.call_count == 3  # initial + 2 retries
 
     def test_no_retry_on_401(self):
@@ -779,13 +799,13 @@ class TestFetchBenchmarksRetry:
         mock_client.__exit__ = MagicMock(return_value=False)
         mock_client.get.return_value = mock_401
 
-        with patch.object(benchmarks, "read_cache", return_value=None), \
-             patch("httpx.Client", return_value=mock_client), \
-             patch.object(benchmarks, "write_cache"):
+        with (
+            patch.object(benchmarks, "read_cache", return_value=None),
+            patch("httpx.Client", return_value=mock_client),
+            patch.object(benchmarks, "write_cache"),
+        ):
             with pytest.raises(BenchmarkAuthError):
-                fetch_benchmarks(
-                    "fake-key", {}, use_cache=False, ttl=3600
-                )
+                fetch_benchmarks("fake-key", {}, use_cache=False, ttl=3600)
             assert mock_client.get.call_count == 1
 
     def test_no_retry_on_network_error(self):
@@ -794,13 +814,13 @@ class TestFetchBenchmarksRetry:
         mock_client.__exit__ = MagicMock(return_value=False)
         mock_client.get.side_effect = httpx.NetworkError("connection failed")
 
-        with patch.object(benchmarks, "read_cache", return_value=None), \
-             patch("httpx.Client", return_value=mock_client), \
-             patch.object(benchmarks, "write_cache"):
+        with (
+            patch.object(benchmarks, "read_cache", return_value=None),
+            patch("httpx.Client", return_value=mock_client),
+            patch.object(benchmarks, "write_cache"),
+        ):
             with pytest.raises(BenchmarkNetworkError):
-                fetch_benchmarks(
-                    "fake-key", {}, use_cache=False, ttl=3600
-                )
+                fetch_benchmarks("fake-key", {}, use_cache=False, ttl=3600)
             assert mock_client.get.call_count == 1
 
     def test_no_retry_on_200(self):
@@ -812,12 +832,12 @@ class TestFetchBenchmarksRetry:
         mock_client.__exit__ = MagicMock(return_value=False)
         mock_client.get.return_value = mock_200
 
-        with patch.object(benchmarks, "read_cache", return_value=None), \
-             patch("httpx.Client", return_value=mock_client), \
-             patch.object(benchmarks, "write_cache"):
-            result = fetch_benchmarks(
-                "fake-key", {}, use_cache=False, ttl=3600
-            )
+        with (
+            patch.object(benchmarks, "read_cache", return_value=None),
+            patch("httpx.Client", return_value=mock_client),
+            patch.object(benchmarks, "write_cache"),
+        ):
+            result = fetch_benchmarks("fake-key", {}, use_cache=False, ttl=3600)
             assert result == {"data": []}
             assert mock_client.get.call_count == 1
 
@@ -825,6 +845,7 @@ class TestFetchBenchmarksRetry:
 # ---------------------------------------------------------------------------
 # cache eviction
 # ---------------------------------------------------------------------------
+
 
 class TestCacheEviction:
     def test_eviction_caps_file_count(self, tmp_path):
@@ -843,6 +864,7 @@ class TestCacheEviction:
 # ---------------------------------------------------------------------------
 # _flatten_row
 # ---------------------------------------------------------------------------
+
 
 class TestFlattenRow:
     def test_nested_dict_flattened(self):
@@ -866,15 +888,26 @@ class TestFlattenRow:
 # render_aa_table
 # ---------------------------------------------------------------------------
 
+
 class TestRenderAaTable:
     def test_columns_and_row_count(self):
         items = [
-            {"display_name": "M1", "model_permaslug": "anthropic/claude",
-             "coding_index": 80.0, "intelligence_index": 90.0, "agentic_index": 50.0,
-             "pricing": {"prompt": "0.001", "completion": "0.002"}},
-            {"display_name": "M2", "model_permaslug": "openai/gpt",
-             "coding_index": 70.0, "intelligence_index": 85.0, "agentic_index": 40.0,
-             "pricing": {"prompt": "0.01", "completion": "0.02"}},
+            {
+                "display_name": "M1",
+                "model_permaslug": "anthropic/claude",
+                "coding_index": 80.0,
+                "intelligence_index": 90.0,
+                "agentic_index": 50.0,
+                "pricing": {"prompt": "0.001", "completion": "0.002"},
+            },
+            {
+                "display_name": "M2",
+                "model_permaslug": "openai/gpt",
+                "coding_index": 70.0,
+                "intelligence_index": 85.0,
+                "agentic_index": 40.0,
+                "pricing": {"prompt": "0.01", "completion": "0.02"},
+            },
         ]
         table = render_aa_table(items, top=2)
         assert len(table.columns) == 8
@@ -882,9 +915,14 @@ class TestRenderAaTable:
 
     def test_top_n_slicing(self):
         items = [
-            {"display_name": f"M{i}", "model_permaslug": f"creator/{i}",
-             "coding_index": float(i), "intelligence_index": float(i),
-             "agentic_index": float(i), "pricing": {}}
+            {
+                "display_name": f"M{i}",
+                "model_permaslug": f"creator/{i}",
+                "coding_index": float(i),
+                "intelligence_index": float(i),
+                "agentic_index": float(i),
+                "pricing": {},
+            }
             for i in range(5)
         ]
         table = render_aa_table(items, top=3)
@@ -893,9 +931,14 @@ class TestRenderAaTable:
 
     def test_missing_indices_show_em_dash(self):
         items = [
-            {"display_name": "M1", "model_permaslug": "c/m",
-             "coding_index": None, "intelligence_index": None, "agentic_index": None,
-             "pricing": {}},
+            {
+                "display_name": "M1",
+                "model_permaslug": "c/m",
+                "coding_index": None,
+                "intelligence_index": None,
+                "agentic_index": None,
+                "pricing": {},
+            },
         ]
         table = render_aa_table(items, top=1)
         assert len(table.rows) == 1
@@ -913,15 +956,25 @@ class TestRenderAaTable:
 # render_da_table
 # ---------------------------------------------------------------------------
 
+
 class TestRenderDaTable:
     def test_columns_and_row_count(self):
         items = [
-            {"display_name": "M1", "model_permaslug": "anthropic/claude",
-             "arena": "models", "category": "code", "elo": 1200.0,
-             "win_rate": 0.75, "tournament_stats": {
-                 "first_place": 5, "second_place": 3,
-                 "third_place": 2, "fourth_place": 1,
-             }, "avg_generation_time_ms": 1500},
+            {
+                "display_name": "M1",
+                "model_permaslug": "anthropic/claude",
+                "arena": "models",
+                "category": "code",
+                "elo": 1200.0,
+                "win_rate": 0.75,
+                "tournament_stats": {
+                    "first_place": 5,
+                    "second_place": 3,
+                    "third_place": 2,
+                    "fourth_place": 1,
+                },
+                "avg_generation_time_ms": 1500,
+            },
         ]
         table = render_da_table(items, top=1)
         assert len(table.columns) == 9
@@ -929,10 +982,16 @@ class TestRenderDaTable:
 
     def test_missing_tournament_stats_defaults_to_zero(self):
         items = [
-            {"display_name": "M1", "model_permaslug": "c/m",
-             "arena": "models", "category": "code", "elo": 1000.0,
-             "win_rate": 0.5, "tournament_stats": None,
-             "avg_generation_time_ms": None},
+            {
+                "display_name": "M1",
+                "model_permaslug": "c/m",
+                "arena": "models",
+                "category": "code",
+                "elo": 1000.0,
+                "win_rate": 0.5,
+                "tournament_stats": None,
+                "avg_generation_time_ms": None,
+            },
         ]
         table = render_da_table(items, top=1)
         placements = table.columns[7]._cells[0]
@@ -941,9 +1000,16 @@ class TestRenderDaTable:
 
     def test_top_n_slicing(self):
         items = [
-            {"display_name": f"M{i}", "model_permaslug": f"c/{i}",
-             "arena": "a", "category": "c", "elo": float(i),
-             "win_rate": 0.5, "tournament_stats": {}, "avg_generation_time_ms": 100}
+            {
+                "display_name": f"M{i}",
+                "model_permaslug": f"c/{i}",
+                "arena": "a",
+                "category": "c",
+                "elo": float(i),
+                "win_rate": 0.5,
+                "tournament_stats": {},
+                "avg_generation_time_ms": 100,
+            }
             for i in range(5)
         ]
         table = render_da_table(items, top=2)
@@ -954,13 +1020,20 @@ class TestRenderDaTable:
 # render_or_table
 # ---------------------------------------------------------------------------
 
+
 class TestRenderOrTable:
     def test_classic_only_has_classic_columns(self):
         items = [
-            {"benchmark_type": "gpqa_diamond", "display_name": "M1",
-             "model_permaslug": "o/g", "accuracy": 0.8,
-             "accuracy_stddev": 0.05, "avg_cost_per_task": 0.05,
-             "total_tasks": 100, "last_run_timestamp": "2024-01-01T00:00:00Z"},
+            {
+                "benchmark_type": "gpqa_diamond",
+                "display_name": "M1",
+                "model_permaslug": "o/g",
+                "accuracy": 0.8,
+                "accuracy_stddev": 0.05,
+                "avg_cost_per_task": 0.05,
+                "total_tasks": 100,
+                "last_run_timestamp": "2024-01-01T00:00:00Z",
+            },
         ]
         table = render_or_table(items, top=1)
         assert len(table.columns) == 9
@@ -968,36 +1041,60 @@ class TestRenderOrTable:
 
     def test_search_only_has_search_columns(self):
         items = [
-            {"benchmark_type": "search_browsecomp", "display_name": "M1",
-             "model_permaslug": "o/g", "primary_score": 0.7,
-             "primary_metric": "F1", "avg_cost_per_task": 0.1,
-             "avg_latency_per_task_ms": 5000, "search_engine": "engine",
-             "search_surface": "web"},
+            {
+                "benchmark_type": "search_browsecomp",
+                "display_name": "M1",
+                "model_permaslug": "o/g",
+                "primary_score": 0.7,
+                "primary_metric": "F1",
+                "avg_cost_per_task": 0.1,
+                "avg_latency_per_task_ms": 5000,
+                "search_engine": "engine",
+                "search_surface": "web",
+            },
         ]
         table = render_or_table(items, top=1)
         assert len(table.columns) == 10
         assert len(table.rows) == 1
 
     def test_mixed_items_adds_section(self):
-        classic = {"benchmark_type": "gpqa_diamond", "display_name": "C1",
-                   "model_permaslug": "o/g", "accuracy": 0.8,
-                   "accuracy_stddev": 0.05, "avg_cost_per_task": 0.05,
-                   "total_tasks": 100, "last_run_timestamp": "2024-01-01T00:00:00Z"}
-        search = {"benchmark_type": "search_browsecomp", "display_name": "S1",
-                  "model_permaslug": "o/g", "primary_score": 0.7,
-                  "primary_metric": "F1", "avg_cost_per_task": 0.1,
-                  "avg_latency_per_task_ms": 5000, "search_engine": "e",
-                  "search_surface": "w"}
+        classic = {
+            "benchmark_type": "gpqa_diamond",
+            "display_name": "C1",
+            "model_permaslug": "o/g",
+            "accuracy": 0.8,
+            "accuracy_stddev": 0.05,
+            "avg_cost_per_task": 0.05,
+            "total_tasks": 100,
+            "last_run_timestamp": "2024-01-01T00:00:00Z",
+        }
+        search = {
+            "benchmark_type": "search_browsecomp",
+            "display_name": "S1",
+            "model_permaslug": "o/g",
+            "primary_score": 0.7,
+            "primary_metric": "F1",
+            "avg_cost_per_task": 0.1,
+            "avg_latency_per_task_ms": 5000,
+            "search_engine": "e",
+            "search_surface": "w",
+        }
         table = render_or_table([classic, search], top=1)
         assert len(table.rows) == 2
 
     def test_missing_cost_or_latency_shows_em_dash(self):
         items = [
-            {"benchmark_type": "search_browsecomp", "display_name": "M1",
-             "model_permaslug": "o/g", "primary_score": 0.7,
-             "primary_metric": "F1", "avg_cost_per_task": None,
-             "avg_latency_per_task_ms": None, "search_engine": "e",
-             "search_surface": "w"},
+            {
+                "benchmark_type": "search_browsecomp",
+                "display_name": "M1",
+                "model_permaslug": "o/g",
+                "primary_score": 0.7,
+                "primary_metric": "F1",
+                "avg_cost_per_task": None,
+                "avg_latency_per_task_ms": None,
+                "search_engine": "e",
+                "search_surface": "w",
+            },
         ]
         table = render_or_table(items, top=1)
         assert table.columns[6]._cells[0] == "—"
@@ -1013,23 +1110,42 @@ class TestRenderOrTable:
 # render_results
 # ---------------------------------------------------------------------------
 
+
 class TestRenderResults:
     def test_mixed_sources_dispatch_to_correct_renderer(self):
         data = {
             "data": [
-                {"source": "artificial-analysis", "display_name": "AA1",
-                 "model_permaslug": "c/m", "coding_index": 80.0,
-                 "intelligence_index": 90.0, "agentic_index": 50.0,
-                 "pricing": {}},
-                {"source": "design-arena", "display_name": "DA1",
-                 "model_permaslug": "c/m", "arena": "models",
-                 "category": "code", "elo": 1200.0, "win_rate": 0.75,
-                 "tournament_stats": {}, "avg_generation_time_ms": 1000},
-                {"source": "openrouter", "display_name": "OR1",
-                 "model_permaslug": "c/m", "benchmark_type": "gpqa_diamond",
-                 "accuracy": 0.8, "accuracy_stddev": 0.05,
-                 "avg_cost_per_task": 0.05, "total_tasks": 100,
-                 "last_run_timestamp": "2024-01-01T00:00:00Z"},
+                {
+                    "source": "artificial-analysis",
+                    "display_name": "AA1",
+                    "model_permaslug": "c/m",
+                    "coding_index": 80.0,
+                    "intelligence_index": 90.0,
+                    "agentic_index": 50.0,
+                    "pricing": {},
+                },
+                {
+                    "source": "design-arena",
+                    "display_name": "DA1",
+                    "model_permaslug": "c/m",
+                    "arena": "models",
+                    "category": "code",
+                    "elo": 1200.0,
+                    "win_rate": 0.75,
+                    "tournament_stats": {},
+                    "avg_generation_time_ms": 1000,
+                },
+                {
+                    "source": "openrouter",
+                    "display_name": "OR1",
+                    "model_permaslug": "c/m",
+                    "benchmark_type": "gpqa_diamond",
+                    "accuracy": 0.8,
+                    "accuracy_stddev": 0.05,
+                    "avg_cost_per_task": 0.05,
+                    "total_tasks": 100,
+                    "last_run_timestamp": "2024-01-01T00:00:00Z",
+                },
             ]
         }
         tables = render_results(data, creator=None, top=2)
@@ -1041,14 +1157,24 @@ class TestRenderResults:
     def test_creator_filter_applied_before_grouping(self):
         data = {
             "data": [
-                {"source": "artificial-analysis", "display_name": "A1",
-                 "model_permaslug": "anthropic/claude", "coding_index": 80.0,
-                 "intelligence_index": 90.0, "agentic_index": 50.0,
-                 "pricing": {}},
-                {"source": "artificial-analysis", "display_name": "A2",
-                 "model_permaslug": "openai/gpt", "coding_index": 70.0,
-                 "intelligence_index": 85.0, "agentic_index": 40.0,
-                 "pricing": {}},
+                {
+                    "source": "artificial-analysis",
+                    "display_name": "A1",
+                    "model_permaslug": "anthropic/claude",
+                    "coding_index": 80.0,
+                    "intelligence_index": 90.0,
+                    "agentic_index": 50.0,
+                    "pricing": {},
+                },
+                {
+                    "source": "artificial-analysis",
+                    "display_name": "A2",
+                    "model_permaslug": "openai/gpt",
+                    "coding_index": 70.0,
+                    "intelligence_index": 85.0,
+                    "agentic_index": 40.0,
+                    "pricing": {},
+                },
             ]
         }
         tables = render_results(data, creator="anthropic", top=2)
@@ -1064,6 +1190,7 @@ class TestRenderResults:
 # ---------------------------------------------------------------------------
 # print_citation
 # ---------------------------------------------------------------------------
+
 
 class TestPrintCitation:
     def test_citation_with_summary(self):
@@ -1095,12 +1222,15 @@ class TestPrintCitation:
 # export_csv edge cases
 # ---------------------------------------------------------------------------
 
+
 class TestExportCsvEdgeCases:
     def test_mixed_nested_and_flat_rows(self, tmp_path):
-        data = {"data": [
-            {"name": "a", "value": 1, "pricing": {"prompt": "0.001"}},
-            {"name": "b", "value": 2},
-        ]}
+        data = {
+            "data": [
+                {"name": "a", "value": 1, "pricing": {"prompt": "0.001"}},
+                {"name": "b", "value": 2},
+            ]
+        }
         dest = tmp_path / "out.csv"
         export_csv(data, str(dest))
         rows = list(csv.DictReader(dest.open()))
@@ -1110,19 +1240,23 @@ class TestExportCsvEdgeCases:
         assert rows[1]["pricing.prompt"] == ""
 
     def test_unicode_and_special_characters(self, tmp_path):
-        data = {"data": [
-            {"name": "café", "desc": "hello\nworld", "value": 1},
-        ]}
+        data = {
+            "data": [
+                {"name": "café", "desc": "hello\nworld", "value": 1},
+            ]
+        }
         dest = tmp_path / "out.csv"
         export_csv(data, str(dest))
         content = dest.read_text(encoding="utf-8")
         assert "café" in content
 
     def test_field_ordering_consistent(self, tmp_path):
-        data = {"data": [
-            {"z": 1, "a": 2, "m": 3},
-            {"z": 4, "a": 5, "m": 6},
-        ]}
+        data = {
+            "data": [
+                {"z": 1, "a": 2, "m": 3},
+                {"z": 4, "a": 5, "m": 6},
+            ]
+        }
         dest = tmp_path / "out.csv"
         export_csv(data, str(dest))
         rows = list(csv.DictReader(dest.open()))
@@ -1133,6 +1267,7 @@ class TestExportCsvEdgeCases:
 # ---------------------------------------------------------------------------
 # build_params edge cases
 # ---------------------------------------------------------------------------
+
 
 class TestBuildParamsEdgeCases:
     def test_whitespace_only_strings_are_stripped_and_omitted(self):
@@ -1153,6 +1288,7 @@ class TestBuildParamsEdgeCases:
 # _namespace_to_args edge cases
 # ---------------------------------------------------------------------------
 
+
 class TestNamespaceToArgsEdgeCases:
     def test_extra_attributes_ignored(self):
         ns = argparse.Namespace(
@@ -1172,6 +1308,7 @@ class TestNamespaceToArgsEdgeCases:
 # ---------------------------------------------------------------------------
 # _evict_if_needed edge cases
 # ---------------------------------------------------------------------------
+
 
 class TestEvictIfNeededEdgeCases:
     def test_no_eviction_when_under_limit(self, tmp_path):
@@ -1198,6 +1335,7 @@ class TestEvictIfNeededEdgeCases:
 # benchmark_catalog.py
 # ---------------------------------------------------------------------------
 
+
 class TestBenchmarkCatalog:
     def test_all_expected_sources_present(self):
         assert "artificial-analysis" in benchmarks.SOURCES
@@ -1215,9 +1353,13 @@ class TestBenchmarkCatalog:
         assert "search_browsecomp" in benchmarks.BENCHMARK_TYPES
 
     def test_all_values_are_non_empty_strings(self):
-        for d in (benchmarks.SOURCES, benchmarks.TASK_TYPES,
-                  benchmarks.BENCHMARK_TYPES, benchmarks.DESIGN_ARENAS,
-                  benchmarks.DESIGN_CATEGORIES):
+        for d in (
+            benchmarks.SOURCES,
+            benchmarks.TASK_TYPES,
+            benchmarks.BENCHMARK_TYPES,
+            benchmarks.DESIGN_ARENAS,
+            benchmarks.DESIGN_CATEGORIES,
+        ):
             for key, value in d.items():
                 assert isinstance(key, str)
                 assert isinstance(value, str)
@@ -1225,15 +1367,20 @@ class TestBenchmarkCatalog:
                 assert len(value) > 0
 
     def test_no_duplicate_keys(self):
-        for d in (benchmarks.SOURCES, benchmarks.TASK_TYPES,
-                  benchmarks.BENCHMARK_TYPES, benchmarks.DESIGN_ARENAS,
-                  benchmarks.DESIGN_CATEGORIES):
+        for d in (
+            benchmarks.SOURCES,
+            benchmarks.TASK_TYPES,
+            benchmarks.BENCHMARK_TYPES,
+            benchmarks.DESIGN_ARENAS,
+            benchmarks.DESIGN_CATEGORIES,
+        ):
             assert len(d.keys()) == len(set(d.keys()))
 
 
 # ---------------------------------------------------------------------------
 # Args full construction
 # ---------------------------------------------------------------------------
+
 
 class TestArgsFullConstruction:
     def test_all_fields_non_default(self):
@@ -1270,22 +1417,31 @@ class TestArgsFullConstruction:
 # Integration test
 # ---------------------------------------------------------------------------
 
+
 class TestIntegration:
     def test_end_to_end_with_mocked_api(self, tmp_path):
         sample_data = {
             "data": [
-                {"source": "openrouter", "display_name": "M1",
-                 "model_permaslug": "openai/gpt", "benchmark_type": "gpqa_diamond",
-                 "accuracy": 0.8, "accuracy_stddev": 0.05,
-                 "avg_cost_per_task": 0.05, "total_tasks": 100,
-                 "last_run_timestamp": "2024-01-01T00:00:00Z"},
+                {
+                    "source": "openrouter",
+                    "display_name": "M1",
+                    "model_permaslug": "openai/gpt",
+                    "benchmark_type": "gpqa_diamond",
+                    "accuracy": 0.8,
+                    "accuracy_stddev": 0.05,
+                    "avg_cost_per_task": 0.05,
+                    "total_tasks": 100,
+                    "last_run_timestamp": "2024-01-01T00:00:00Z",
+                },
             ],
             "meta": {"citation": "OpenRouter", "model_count": 1, "as_of": "2024-01-01T00:00:00Z"},
         }
         out_json = tmp_path / "out.json"
-        with patch.object(benchmarks, "get_api_key", return_value="sk-test"), \
-             patch.object(benchmarks, "fetch_benchmarks", return_value=sample_data), \
-             patch.object(benchmarks, "get_console") as mock_console:
+        with (
+            patch.object(benchmarks, "get_api_key", return_value="sk-test"),
+            patch.object(benchmarks, "fetch_benchmarks", return_value=sample_data),
+            patch.object(benchmarks, "get_console"),
+        ):
             main(argv=["--json", str(out_json), "--source", "openrouter"])
             assert out_json.exists()
             assert json.loads(out_json.read_text()) == sample_data
@@ -1294,6 +1450,7 @@ class TestIntegration:
 # ---------------------------------------------------------------------------
 # _first_float helper
 # ---------------------------------------------------------------------------
+
 
 class TestFirstFloat:
     def test_returns_first_non_none(self):
@@ -1316,6 +1473,7 @@ class TestFirstFloat:
 # ---------------------------------------------------------------------------
 # sort_by_score_desc edge cases
 # ---------------------------------------------------------------------------
+
 
 class TestSortByScoreDescEdgeCases:
     def test_unknown_source_returns_zero_sorted(self):
@@ -1344,14 +1502,22 @@ class TestSortByScoreDescEdgeCases:
 # render_results edge cases
 # ---------------------------------------------------------------------------
 
+
 class TestRenderResultsEdgeCases:
     def test_unknown_source_ignored(self):
-        data = {"data": [
-            {"source": "mystery-source", "display_name": "M1",
-             "model_permaslug": "c/m", "coding_index": 80.0,
-             "intelligence_index": 90.0, "agentic_index": 50.0,
-             "pricing": {}},
-        ]}
+        data = {
+            "data": [
+                {
+                    "source": "mystery-source",
+                    "display_name": "M1",
+                    "model_permaslug": "c/m",
+                    "coding_index": 80.0,
+                    "intelligence_index": 90.0,
+                    "agentic_index": 50.0,
+                    "pricing": {},
+                },
+            ]
+        }
         tables = render_results(data, creator=None, top=2)
         assert tables == []
 
@@ -1364,6 +1530,7 @@ class TestRenderResultsEdgeCases:
 # _RENDERERS dispatch dict
 # ---------------------------------------------------------------------------
 
+
 class TestRenderersDispatch:
     def test_all_known_sources_have_renderer(self):
         for source in benchmarks.SOURCES:
@@ -1371,9 +1538,14 @@ class TestRenderersDispatch:
 
     def test_renderer_callable_returns_table(self):
         items = [
-            {"display_name": "M1", "model_permaslug": "anthropic/claude",
-             "coding_index": 80.0, "intelligence_index": 90.0,
-             "agentic_index": 50.0, "pricing": {}},
+            {
+                "display_name": "M1",
+                "model_permaslug": "anthropic/claude",
+                "coding_index": 80.0,
+                "intelligence_index": 90.0,
+                "agentic_index": 50.0,
+                "pricing": {},
+            },
         ]
         table = benchmarks._RENDERERS["artificial-analysis"](items, 1)
         assert isinstance(table, Table)

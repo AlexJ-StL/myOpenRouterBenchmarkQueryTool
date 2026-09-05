@@ -137,10 +137,10 @@ uv run benchmarks.py --task coding --no-cache
 ```
                        Artificial Analysis — Composite Indexes
 ┌───┬──────────┬─────────┬───────┬─────────────┬─────────┬─────────┬──────────┐
-│ # │ Model    │ Creator │ Coding│ Intelligence│ Agentic │ $/1K in │ $/1K out │
+│ # │ Model    │ Creator │ Coding│ Intelligence│ Agentic │ $/1M in │ $/1M out │
 ├───┼──────────┼─────────┼───────┼─────────────┼─────────┼─────────┼──────────┤
-│ 1 │ Claude   │ anthropic│  72.1 │       75.4  │   58.3  │  $3.00  │   $15.00 │
-│ 2 │ Sonnet 4 │ anthropic│  65.8 │       71.2  │   62.0  │  $0.80  │    $4.00 │
+│ 1 │ Claude   │ anthropic│  72.1 │       75.4  │   58.3  │  $15.00  │   $75.00 │
+│ 2 │ Sonnet 4 │ anthropic│  65.8 │       71.2  │   62.0  │   $3.00  │   $15.00 │
 └───┴──────────┴─────────┴───────┴─────────────┴─────────┴─────────┴──────────┘
 ╭─ Attribution ─────────────────────────────────────────────────╮
 │ Source: Artificial Analysis (artificialanalysis.ai) via       │

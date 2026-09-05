@@ -213,12 +213,13 @@ def parse_price(per_token_str: str | None) -> float | None:
     if not per_token_str:
         return None
     try:
-        return float(per_token_str) * 1000.0
+        return float(per_token_str) * 1_000_000.0
     except (TypeError, ValueError):
         return None
 
-# The API returns pricing as cost per token; this converts to cost per 1 000 tokens
-# so the rendered table columns ("$/1K in" / "$/1K out") display familiar figures.
+# The API returns pricing as cost per token; this converts to cost per 1 000 000 tokens
+# so the rendered table columns ("$/1M in" / "$/1M out") match the convention used by
+# OpenRouter and most LLM pricing pages.
 
 
 def fmt_price(per_token_str: str | None) -> str:
@@ -296,8 +297,8 @@ def render_aa_table(items: list[dict[str, Any]], top: int) -> Table:
     table.add_column("Coding", justify="right")
     table.add_column("Intelligence", justify="right")
     table.add_column("Agentic", justify="right")
-    table.add_column("$/1K in", justify="right")
-    table.add_column("$/1K out", justify="right")
+    table.add_column("$/1M in", justify="right")
+    table.add_column("$/1M out", justify="right")
     for idx, it in enumerate(items[:top], start=1):
         pricing = it.get("pricing") or {}
         table.add_row(
